@@ -250,7 +250,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
         content = '<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n  <title>New Page</title>\n  <script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body>\n  <div class="container mx-auto p-4">\n    <h1 class="text-2xl font-bold">Hello World</h1>\n    <p>Start editing this file</p>\n  </div>\n</body>\n</html>';
         break;
       case 'css':
-        name = `styles-${files.length + 1}.css`;
+        name = `style-${files.length + 1}.css`;
         content = '/* Main Styles */\nbody {\n  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;\n  line-height: 1.5;\n  color: #333;\n}\n\n.container {\n  max-width: 1200px;\n  margin: 0 auto;\n  padding: 0 1rem;\n}\n\nh1, h2, h3 {\n  margin-top: 2rem;\n  margin-bottom: 1rem;\n}\n\np {\n  margin-bottom: 1rem;\n}';
         break;
       case 'js':
@@ -574,7 +574,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
           // Create CSS file if there's CSS content
           if (result.css) {
             const cssId = generateUniqueId();
-            const cssFileName = `${pageFileName}-styles`;
+            const cssFileName = `style-${pageFileName}`;
             const cssFile: FileNode = {
               id: cssId,
               name: `${cssFileName}.css`,
