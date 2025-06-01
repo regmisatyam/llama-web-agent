@@ -110,18 +110,39 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   // Auto scroll to bottom on new messages
   useEffect(() => {
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-      
-      // Force a re-render of the messages area
-      const messagesArea = messagesEndRef.current.parentElement;
-      if (messagesArea) {
-        messagesArea.style.opacity = '0.99';
-        setTimeout(() => {
-          messagesArea.style.opacity = '1';
-        }, 10);
+      // Use a more reliable scrolling method
+      const scrollContainer = messagesEndRef.current.parentElement;
+      if (scrollContainer) {
+        // Store scroll position before update
+        const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 100;
+        
+        // Only auto-scroll if user was already at the bottom
+        if (isAtBottom) {
+          // Delay scroll slightly to ensure content is rendered
+          setTimeout(() => {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }, 100);
+        }
       }
     }
   }, [messages]);
+  
+  // Prevent scroll jumps when code blocks expand
+  const handleCodeBlockExpand = useCallback((event: React.MouseEvent) => {
+    // Prevent scroll jumps when clicking on code blocks
+    event.stopPropagation();
+    
+    // Store current scroll position
+    const messagesContainer = messagesEndRef.current?.parentElement;
+    if (messagesContainer) {
+      const scrollTop = messagesContainer.scrollTop;
+      
+      // After DOM updates, restore scroll position
+      setTimeout(() => {
+        messagesContainer.scrollTop = scrollTop;
+      }, 10);
+    }
+  }, []);
   
   // Log messages for debugging when they change
   useEffect(() => {
@@ -599,6 +620,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleVoiceCommand = (command: string) => {
     console.log("Voice command received:", command);
     
+    // Don't process empty commands
+    if (!command || !command.trim()) {
+      return;
+    }
+    
     // Automatically switch to modify mode for code editing commands
     if (!modifyMode && (
       command.toLowerCase().startsWith('modify') || 
@@ -629,11 +655,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       isLoading: true
     };
     
-    // Update messages
+    // Update messages with a stable reference
     const updatedMessages = [...messages, userMessage, loadingMessage];
     onMessagesUpdate(updatedMessages);
     
-    // Process the command
+    // Process the command after a short delay to allow UI to update
     setTimeout(async () => {
       try {
         setIsLoading(true);
@@ -714,7 +740,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           }
         }
         
-        // Update the loading message
+        // Create a new stable reference for the final messages array
         const finalMessages = updatedMessages.map(msg => 
           msg.id === loadingMessage.id 
             ? {
@@ -726,7 +752,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
             : msg
         );
         
-        onMessagesUpdate(finalMessages);
+        // Update messages with the final content
+        onMessagesUpdate([...finalMessages]);
         
         // Refresh the contexts list after sending a message
         setSavedContexts(getContextList());
@@ -745,29 +772,35 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
             : msg
         );
         
-        onMessagesUpdate(errorMessages);
+        onMessagesUpdate([...errorMessages]);
       } finally {
         setIsLoading(false);
         setInputValue('');
       }
-    }, 500);
+    }, 300);
   };
 
   return (
     <div className="h-full flex flex-col bg-gray-800">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-messages">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-messages" style={{ 
+        scrollBehavior: 'smooth', 
+        overscrollBehavior: 'contain',
+        contain: 'paint layout',
+        position: 'relative',
+        maxHeight: 'calc(100vh - 220px)'
+      }}>
         {messages.map(message => (
           <div key={message.id} className="flex items-start gap-3 message animate-fade-in" data-id={message.id} data-type={message.type}>
             {/* Avatar */}
-            <div className="mt-1">
+            <div className="mt-1 flex-shrink-0" style={{ flexBasis: '28px', minWidth: '28px' }}>
               {message.type === 'user' ? <Icons.User /> : 
                message.type === 'system' ? <Icons.System /> : 
                <Icons.AI />}
             </div>
             
             {/* Message Content */}
-            <div className="flex-1">
+            <div className="flex-1 message-container" style={{ minWidth: 0 }}>
               <div className={`${
                 message.type === 'user' 
                   ? 'bg-gray-700 text-white border-gray-600' 
@@ -914,11 +947,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
         
         {/* Add a small help text at the bottom */}
-        <div className="mt-2 text-xs text-gray-500 px-1">
-          {modifyMode 
-            ? "Describe the changes you want to make to the current file. Use specific instructions." 
-            : "Ask questions about your code or request specific modifications."}
-        </div>
+        
       </div>
       
       {/* Add global CSS for animation */}
@@ -945,6 +974,41 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         .markdown-content ul, 
         .markdown-content ol {
           padding-left: 1.5em;
+        }
+        
+        /* Fix for code block expansion */
+        .chat-messages {
+          scroll-padding-bottom: 20px;
+          contain: paint layout;
+          height: 100%;
+          overscroll-behavior: contain;
+        }
+        .chat-messages pre {
+          contain: content;
+        }
+        .message {
+          contain: layout;
+        }
+        .prose pre {
+          margin: 0;
+        }
+        
+        /* Fix for voice agent UI stability */
+        .voice-agent {
+          min-height: 100px;
+          position: relative;
+          contain: paint layout;
+        }
+        
+        /* Prevent layout shifts */
+        .flex-1 {
+          min-height: 0;
+        }
+        
+        /* Fix for message container */
+        .message-content {
+          overflow-wrap: break-word;
+          word-break: break-word;
         }
       `}</style>
     </div>
