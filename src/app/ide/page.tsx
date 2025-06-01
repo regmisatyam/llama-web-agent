@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import IDELayout from '../components/IDELayout';
 
-export default function IDEPage() {
+function IDEContent() {
   const searchParams = useSearchParams();
   const [initialHtml, setInitialHtml] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
@@ -51,4 +51,17 @@ export default function IDEPage() {
   }
   
   return <IDELayout initialHtml={initialHtml} />;
+}
+
+export default function IDEPage() {
+  return (
+    <Suspense fallback={
+      <div className="h-screen flex items-center justify-center bg-gray-900 text-white">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+        <span className="ml-3">Loading IDE...</span>
+      </div>
+    }>
+      <IDEContent />
+    </Suspense>
+  );
 } 

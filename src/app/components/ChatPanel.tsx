@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { getContextList, IDEContext, saveCodeAndChatState, getCodeAndChatState, ChatMessage } from '../utils/contextManager';
+import { getContextList, IDEContext, getCodeAndChatState, ChatMessage } from '../utils/contextManager';
 import { formatCodeModificationMessage, getCodeModificationSystemPrompt, extractCodeFromResponse, processGeneratedHtml } from '../utils/codeModifier';
 import VoiceAgent from './VoiceAgent';
+import type { FileNode } from './FileExplorer';
 
 // Icons for the chat panel
 const Icons = {
@@ -68,12 +69,17 @@ interface Message extends ChatMessage {
 
 interface ChatPanelProps {
   currentFileContent?: string;
-  files: any[];
+  files: FileNode[];
   activeFileId: string | null;
   onApplyHtml: (html: string) => void;
-  onSendMessage: (message: string) => Promise<any>;
+  onSendMessage: (message: string) => Promise<{
+    message?: string;
+    generatedHtml?: string;
+    success?: boolean;
+    error?: string;
+  }>;
   onRevertState: (stateToRevert: {
-    files: any[];
+    files: FileNode[];
     activeFileId: string | null;
     messages: Message[];
   }) => void;
@@ -234,53 +240,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         const systemPrompt = getCodeModificationSystemPrompt(language);
         
         // Send the modification request
-        response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              modificationMessage
-            ],
-          }),
-        });
+        response = await onSendMessage(inputValue);
       } else {
-        // Include saved contexts information in the request
-        // Note: We're only sending metadata about contexts, not the full content
-        // to avoid making the request too large
-        const contextsMetadata = savedContexts.map(ctx => ({
-          id: ctx.id,
-          name: ctx.name,
-          timestamp: ctx.timestamp,
-          fileCount: ctx.files.length,
-        }));
-        
-        // Get the active file for context
-        const currentActiveFile = files.find(f => f.id === activeFileId);
-        
         // Regular chat message
-        response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: inputValue }],
-            context: {
-              currentFile: currentActiveFile?.content ? {
-                name: currentActiveFile.name,
-                language: currentActiveFile.language,
-                content: currentActiveFile.content
-              } : undefined,
-              savedContexts: contextsMetadata
-            }
-          }),
-        });
+        response = await onSendMessage(inputValue);
       }
       
-      const result = await response.json();
+      const result = await response;
       
       // Debug information
       console.log("API response:", {
@@ -361,7 +327,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         // Add as a new message if we couldn't find the loading message
         const newAssistantMessage: Message = {
           id: `assistant-${Date.now()}`,
-          content: result.message,
+          content: result.message || "No response received",
           type: 'assistant',
           timestamp: new Date(),
           htmlSuggestion: result.generatedHtml || undefined
@@ -693,51 +659,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           const systemPrompt = getCodeModificationSystemPrompt(language);
           
           // Send the modification request
-          response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              messages: [
-                { role: 'system', content: systemPrompt },
-                modificationMessage
-              ],
-            }),
-          });
+          response = await onSendMessage(command);
         } else {
-          // Include saved contexts information in the request
-          const contextsMetadata = savedContexts.map(ctx => ({
-            id: ctx.id,
-            name: ctx.name,
-            timestamp: ctx.timestamp,
-            fileCount: ctx.files.length,
-          }));
-          
-          // Get the active file for context
-          const currentActiveFile = files.find(f => f.id === activeFileId);
-          
           // Regular chat message
-          response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              messages: [{ role: 'user', content: command }],
-              context: {
-                currentFile: currentActiveFile?.content ? {
-                  name: currentActiveFile.name,
-                  language: currentActiveFile.language,
-                  content: currentActiveFile.content
-                } : undefined,
-                savedContexts: contextsMetadata
-              }
-            }),
-          });
+          response = await onSendMessage(command);
         }
         
-        const result = await response.json();
+        const result = await response;
         
         // Process the response
         if (result.message) {
