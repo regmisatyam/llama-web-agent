@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import LlamaAPIClient from 'llama-api-client';
+import { processHtmlWithSvgLogos, addFaviconIfMissing } from '../../utils/htmlProcessor';
 
 // Initialize Llama API client
 let llamaAPI: LlamaAPIClient | null = null;
@@ -26,9 +27,15 @@ export async function POST(request: NextRequest) {
     // Check if API key is configured
     if (!process.env.LLAMA_API_KEY || !llamaAPI) {
       console.log('🔑 LLAMA_API_KEY not configured, returning demo response');
+      
+      // Process demo HTML with SVG logos
+      const demoHtml = createDemoHTML();
+      const processedDemoHtml = processHtmlWithSvgLogos(demoHtml);
+      const finalDemoHtml = addFaviconIfMissing(processedDemoHtml);
+      
       return NextResponse.json({
         success: true,
-        html: createDemoHTML(),
+        html: finalDemoHtml,
         css: createDemoCSS(),
         js: createDemoJS(),
         demo: true
@@ -45,7 +52,7 @@ export async function POST(request: NextRequest) {
     // Define the prompt
     const basePrompt = customPrompt || "Analyze this website design image and generate clean, responsive HTML using Tailwind CSS. Please provide HTML, CSS, and JavaScript as separate files.";
     
-    // Define prompt with separate file instructions
+    // Define prompt with separate file instructions and SVG logo generation
     const fullPrompt = `${basePrompt}
 
 Please provide your response in the following format:
@@ -67,7 +74,7 @@ Please provide your response in the following format:
 
 4. Brief explanation of the implementation.
 
-Make the design responsive and use Tailwind CSS for styling. Include JavaScript only if necessary for interactive elements.`;
+Make the design responsive and use Tailwind CSS for styling. Include JavaScript only if necessary for interactive elements. Don't worry about creating logos or icons - I will handle those automatically.`;
 
     try {
       console.log('🔄 Sending image to Llama API with prompt:', fullPrompt.substring(0, 100) + '...');
@@ -98,9 +105,19 @@ Make the design responsive and use Tailwind CSS for styling. Include JavaScript 
         const cssMatch = messageContent.match(/```css\n([\s\S]*?)```/);
         const jsMatch = messageContent.match(/```js(?:cript)?\n([\s\S]*?)```/);
         
-        const html = htmlMatch ? htmlMatch[1].trim() : '';
+        const rawHtml = htmlMatch ? htmlMatch[1].trim() : '';
         const css = cssMatch ? cssMatch[1].trim() : '';
         const js = jsMatch ? jsMatch[1].trim() : '';
+        
+        // Process HTML to add SVG logos and favicon
+        let processedHtml = '';
+        if (rawHtml) {
+          console.log('🎨 Processing HTML with SVG logos and favicon');
+          processedHtml = processHtmlWithSvgLogos(rawHtml);
+          processedHtml = addFaviconIfMissing(processedHtml);
+        } else {
+          processedHtml = rawHtml;
+        }
         
         // Extract any analysis or explanation
         let analysis = '';
@@ -110,10 +127,10 @@ Make the design responsive and use Tailwind CSS for styling. Include JavaScript 
           analysis = parts[parts.length - 1].trim();
         }
         
-        if (html) {
+        if (processedHtml) {
           return NextResponse.json({
             success: true,
-            html,
+            html: processedHtml,
             css,
             js,
             analysis,
@@ -165,7 +182,10 @@ function createDemoHTML() {
   <header class="bg-blue-600 text-white shadow-md">
     <div class="container mx-auto px-4 py-6">
       <nav class="flex justify-between items-center">
-        <a href="#" class="text-2xl font-bold">DEMO</a>
+        <a href="#" class="text-2xl font-bold flex items-center gap-2">
+          <img src="https://via.placeholder.com/40" alt="Logo" class="w-10 h-10">
+          <span>DEMO</span>
+        </a>
         <ul class="flex space-x-6">
           <li><a href="#" class="hover:underline">Home</a></li>
           <li><a href="#" class="hover:underline">Features</a></li>
