@@ -453,6 +453,12 @@ export default function HomePage() {
     }
   };
 
+  const openInIDE = (html: string) => {
+    // Base64 encode the HTML to pass it through URL
+    const encodedHtml = btoa(html);
+    window.location.href = `/ide?code=${encodedHtml}`;
+  };
+
   // Initialize with first conversation if none exist
   useEffect(() => {
     if (conversations.length === 0) {
@@ -584,11 +590,20 @@ export default function HomePage() {
         <div className="p-4 border-b border-gray-200">
           <button
             onClick={createNewConversation}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors mb-2"
           >
             <Icons.Plus />
             New Generation
           </button>
+          <a
+            href="/ide"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Go to Code Editor
+          </a>
         </div>
 
         {/* Conversations List */}
@@ -740,7 +755,7 @@ export default function HomePage() {
                               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
                             >
                               <Icons.Eye />
-                              Preview in Modal
+                              Preview
                             </button>
                             <button
                               onClick={() => {
@@ -750,7 +765,19 @@ export default function HomePage() {
                               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
                             >
                               <Icons.ExternalLink />
-                              Open in New Tab
+                              Open in Tab
+                            </button>
+                            <button
+                              onClick={() => {
+                                console.log('IDE button clicked');
+                                openInIDE(message.generatedHtml!);
+                              }}
+                              className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              Edit in IDE
                             </button>
                             <button
                               onClick={() => {

@@ -39,7 +39,53 @@ export async function POST(request: NextRequest) {
     }));
 
     // Add context if provided (e.g., generated HTML)
-    if (context?.generatedHtml) {
+    if (context?.currentFile) {
+      let contextMessage = `You are a helpful AI assistant specialized in web development. The user is working on a web project with the following files:\n\n`;
+      
+      // Current file details
+      contextMessage += `CURRENT ACTIVE FILE: ${context.currentFile.name} (${context.currentFile.language.toUpperCase()})\n`;
+      contextMessage += `\`\`\`${context.currentFile.language}\n${context.currentFile.content}\n\`\`\`\n\n`;
+      
+      // List other project files if available
+      if (context.projectFiles && context.projectFiles.length > 1) {
+        contextMessage += `OTHER PROJECT FILES:\n`;
+        context.projectFiles.forEach((file: any) => {
+          if (!file.isActive) {
+            contextMessage += `- ${file.name} (${file.language.toUpperCase()})\n`;
+          }
+        });
+        contextMessage += `\n`;
+      }
+      
+      // Add file relationships if available
+      if (context.fileRelationships && context.fileRelationships.length) {
+        contextMessage += `FILE RELATIONSHIPS:\n`;
+        context.fileRelationships.forEach((rel: any) => {
+          contextMessage += `- ${rel.htmlFile} links to `;
+          if (rel.linkedCssFiles.length) {
+            contextMessage += `CSS: ${rel.linkedCssFiles.join(', ')} `;
+          }
+          if (rel.linkedJsFiles.length) {
+            contextMessage += `JS: ${rel.linkedJsFiles.join(', ')}`;
+          }
+          contextMessage += `\n`;
+        });
+        contextMessage += `\n`;
+      }
+      
+      contextMessage += `When the user asks for modifications:
+1. Provide the COMPLETE modified code, not just snippets
+2. Include ALL the original code with your changes
+3. Wrap HTML, CSS, or JS code in appropriate code blocks like \`\`\`html, \`\`\`css, or \`\`\`js
+4. Explain what changes you made
+
+You can help the user understand, modify, or improve any of these files, or assist with any other questions.`;
+      
+      formattedMessages.unshift({
+        role: 'system',
+        content: contextMessage
+      });
+    } else if (context?.generatedHtml) {
       formattedMessages.unshift({
         role: 'system',
         content: `You are a helpful AI assistant specialized in web development. The user has previously generated HTML code from an image. Here is the current HTML code for reference:
