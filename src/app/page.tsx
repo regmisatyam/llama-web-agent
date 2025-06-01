@@ -53,7 +53,7 @@ export default function Redirect() {
             click here
           </button>
         </p>
-      </div>
+        </div>
     </div>
   );
 }

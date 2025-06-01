@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { getContextList, IDEContext, saveCodeAndChatState, getCodeAndChatState, ChatMessage } from '../utils/contextManager';
 import { formatCodeModificationMessage, getCodeModificationSystemPrompt, extractCodeFromResponse, processGeneratedHtml } from '../utils/codeModifier';
+import VoiceAgent from './VoiceAgent';
 
 // Icons for the chat panel
 const Icons = {
@@ -53,6 +54,11 @@ const Icons = {
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
+  ),
+  Voice: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+    </svg>
   )
 };
 
@@ -93,6 +99,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   // Mode switching (chat vs code modification)
   const [modifyMode, setModifyMode] = useState(false);
   const [promptPlaceholder, setPromptPlaceholder] = useState('Ask about code or request changes...');
+  
+  // Voice agent state
+  const [isVoiceAgentListening, setIsVoiceAgentListening] = useState(false);
+  const [showVoiceAgent, setShowVoiceAgent] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -557,6 +567,191 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const toggleModifyMode = () => {
     setModifyMode(!modifyMode);
   };
+  
+  // Toggle voice agent visibility
+  const toggleVoiceAgent = useCallback(() => {
+    setShowVoiceAgent(prev => {
+      // If turning on voice agent, also start listening
+      if (!prev) {
+        setTimeout(() => setIsVoiceAgentListening(true), 100);
+      } else {
+        // If turning off, stop listening
+        setIsVoiceAgentListening(false);
+      }
+      return !prev;
+    });
+  }, []);
+  
+  // Add keyboard shortcuts for voice agent
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Alt+V to toggle voice agent
+      if (e.altKey && e.key === 'v') {
+        toggleVoiceAgent();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleVoiceAgent]);
+  
+  // Handle voice commands
+  const handleVoiceCommand = (command: string) => {
+    console.log("Voice command received:", command);
+    
+    // Automatically switch to modify mode for code editing commands
+    if (!modifyMode && (
+      command.toLowerCase().startsWith('modify') || 
+      command.toLowerCase().startsWith('add') || 
+      command.toLowerCase().startsWith('change') || 
+      command.toLowerCase().startsWith('delete')
+    )) {
+      setModifyMode(true);
+    }
+    
+    // Set the input value to the voice command
+    setInputValue(command);
+    
+    // Create a user message
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
+      content: command,
+      type: 'user',
+      timestamp: new Date()
+    };
+    
+    // Create a loading message
+    const loadingMessage: Message = {
+      id: `assistant-${Date.now()}`,
+      content: 'Processing voice command...',
+      type: 'assistant',
+      timestamp: new Date(),
+      isLoading: true
+    };
+    
+    // Update messages
+    const updatedMessages = [...messages, userMessage, loadingMessage];
+    onMessagesUpdate(updatedMessages);
+    
+    // Process the command
+    setTimeout(async () => {
+      try {
+        setIsLoading(true);
+        
+        // Handle differently based on mode
+        let response;
+        
+        if (modifyMode && currentFileContent) {
+          // Get the active file's language
+          const activeFile = files.find(f => f.id === activeFileId);
+          const language = activeFile?.language || 'html';
+          
+          // Format as a code modification request with the current file content
+          const modificationMessage = formatCodeModificationMessage(command, currentFileContent, language);
+          
+          // Get a system prompt specific to code modification
+          const systemPrompt = getCodeModificationSystemPrompt(language);
+          
+          // Send the modification request
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messages: [
+                { role: 'system', content: systemPrompt },
+                modificationMessage
+              ],
+            }),
+          });
+        } else {
+          // Include saved contexts information in the request
+          const contextsMetadata = savedContexts.map(ctx => ({
+            id: ctx.id,
+            name: ctx.name,
+            timestamp: ctx.timestamp,
+            fileCount: ctx.files.length,
+          }));
+          
+          // Get the active file for context
+          const currentActiveFile = files.find(f => f.id === activeFileId);
+          
+          // Regular chat message
+          response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messages: [{ role: 'user', content: command }],
+              context: {
+                currentFile: currentActiveFile?.content ? {
+                  name: currentActiveFile.name,
+                  language: currentActiveFile.language,
+                  content: currentActiveFile.content
+                } : undefined,
+                savedContexts: contextsMetadata
+              }
+            }),
+          });
+        }
+        
+        const result = await response.json();
+        
+        // Process the response
+        if (result.message) {
+          // Always check for code in the response, whether in modify mode or not
+          const extracted = extractCodeFromResponse(result.message);
+          
+          // If we have HTML, process it with SVG logos and favicon
+          if (extracted.html) {
+            const processedHtml = processGeneratedHtml(extracted.html);
+            result.generatedHtml = processedHtml;
+          } else if (result.generatedHtml) {
+            // If the API already extracted HTML, make sure it's processed
+            result.generatedHtml = processGeneratedHtml(result.generatedHtml);
+          }
+        }
+        
+        // Update the loading message
+        const finalMessages = updatedMessages.map(msg => 
+          msg.id === loadingMessage.id 
+            ? {
+                ...msg,
+                content: result.message || "No response received",
+                isLoading: false,
+                htmlSuggestion: result.generatedHtml
+              }
+            : msg
+        );
+        
+        onMessagesUpdate(finalMessages);
+        
+        // Refresh the contexts list after sending a message
+        setSavedContexts(getContextList());
+        setCanRevert(true);
+      } catch (error) {
+        console.error("Error processing voice command:", error);
+        
+        // Update with error message
+        const errorMessages = updatedMessages.map(msg => 
+          msg.id === loadingMessage.id 
+            ? {
+                ...msg,
+                content: "Sorry, I encountered an error processing your voice command.",
+                isLoading: false
+              }
+            : msg
+        );
+        
+        onMessagesUpdate(errorMessages);
+      } finally {
+        setIsLoading(false);
+        setInputValue('');
+      }
+    }, 500);
+  };
 
   return (
     <div className="h-full flex flex-col bg-gray-800">
@@ -664,12 +859,37 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
             {modifyMode ? <Icons.Chat /> : <Icons.ModifyCode />}
             {modifyMode ? 'Chat Mode' : 'Modify Mode'}
           </button>
+          
+          <button
+            onClick={toggleVoiceAgent}
+            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
+              showVoiceAgent
+                ? 'bg-purple-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+            title={showVoiceAgent ? "Hide voice agent" : "Show voice agent"}
+          >
+            <Icons.Voice />
+            Voice Agent
+          </button>
+          
           {modifyMode && (
             <div className="text-xs text-gray-400">
               Enter instructions to modify the current file
             </div>
           )}
         </div>
+        
+        {/* Voice Agent */}
+        {showVoiceAgent && (
+          <div className="mb-3 bg-gray-900 p-3 rounded-md border border-gray-700">
+            <VoiceAgent 
+              onVoiceCommand={handleVoiceCommand}
+              isListening={isVoiceAgentListening}
+              setIsListening={setIsVoiceAgentListening}
+            />
+          </div>
+        )}
         
         <div className="relative">
           <textarea
