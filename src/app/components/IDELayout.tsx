@@ -13,8 +13,10 @@ import {
   IDEContext, 
   getCodeAndChatState,
   saveCodeAndChatState,
-  ChatMessage
+  ChatMessage,
+  clearAllContexts
 } from '../utils/contextManager';
+import { generateZipFromFiles } from '../utils/zipGenerator';
 
 // Icons for the chat panel header
 const Icons = {
@@ -771,6 +773,38 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
     }
   };
   
+  // Handle clearing all contexts
+  const handleClearAllContexts = () => {
+    const success = clearAllContexts();
+    if (success) {
+      setSavedContexts([]);
+      // Show a brief notification
+      alert('All saved contexts have been cleared.');
+    } else {
+      alert('Failed to clear contexts. Please try again.');
+    }
+  };
+  
+  // Handle downloading project as ZIP
+  const handleDownloadZip = async () => {
+    if (files.length === 0) {
+      alert('No files to download. Create or generate files first.');
+      return;
+    }
+    
+    try {
+      // Use the active file name as part of the project name if available
+      const projectName = activeFile ? 
+        `website-${activeFile.name.split('.')[0]}` : 
+        'website-project';
+      
+      await generateZipFromFiles(files, projectName);
+    } catch (error) {
+      console.error('Failed to download ZIP:', error);
+      alert('Failed to download ZIP file. Please try again.');
+    }
+  };
+  
   return (
     <div className="h-screen flex flex-col bg-gray-900">
       {/* Top Bar */}
@@ -1159,6 +1193,8 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
             activeFileId={activeFileId} 
             onFileSelect={handleFileSelect}
             onCreateNewFile={handleCreateNewFile}
+            onClearContexts={handleClearAllContexts}
+            onDownloadZip={handleDownloadZip}
           />
         </div>
         

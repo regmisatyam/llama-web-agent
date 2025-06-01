@@ -1,5 +1,8 @@
 import { FileNode } from '../components/FileExplorer';
 
+// Re-export FileNode for other modules
+export type { FileNode };
+
 export interface IDEContext {
   id: string;
   name: string;
@@ -136,4 +139,35 @@ export const updateContext = (contextId: string, updates: { name?: string; descr
   
   localStorage.setItem('ide-context-list', JSON.stringify(updatedContexts));
   return true;
+};
+
+// Clear all saved contexts
+export const clearAllContexts = (): boolean => {
+  try {
+    localStorage.removeItem('ide-context-list');
+    return true;
+  } catch (error) {
+    console.error('Failed to clear contexts:', error);
+    return false;
+  }
+};
+
+// Prepare files for download as a zip
+export const prepareFilesForZip = (files: FileNode[]): { name: string; content: string; }[] => {
+  // Flatten nested files if any and extract file data
+  const flattenFiles = (nodes: FileNode[], prefix = ''): { name: string; content: string; }[] => {
+    return nodes.reduce((acc, node) => {
+      if (node.type === 'folder' && node.children) {
+        // For folders, recursively process children with path prefix
+        const folderPath = `${prefix}${node.name}/`;
+        return [...acc, ...flattenFiles(node.children, folderPath)];
+      } else if (node.type === 'file' && node.content) {
+        // For files, add to the result array
+        return [...acc, { name: `${prefix}${node.name}`, content: node.content }];
+      }
+      return acc;
+    }, [] as { name: string; content: string; }[]);
+  };
+
+  return flattenFiles(files);
 }; 
