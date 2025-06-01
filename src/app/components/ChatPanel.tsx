@@ -223,30 +223,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col bg-gray-800 border-l border-gray-700">
-      {/* Chat Header */}
-      <div className="p-3 border-b border-gray-700 flex justify-between items-center">
-        <span className="text-sm font-semibold text-gray-200">AI Assistant</span>
-        <div className="flex items-center gap-2">
-          {canRevert && (
-            <button 
-              onClick={handleRevert} 
-              className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
-              title="Revert to previous state"
-            >
-              <Icons.Revert />
-            </button>
-          )}
-          <button 
-            onClick={handleClearMessages} 
-            className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
-            title="Clear conversation"
-          >
-            <Icons.Clear />
-          </button>
-        </div>
-      </div>
-      
+    <div className="h-full flex flex-col bg-gray-800">
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map(message => (

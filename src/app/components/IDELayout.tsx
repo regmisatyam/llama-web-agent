@@ -16,6 +16,20 @@ import {
   ChatMessage
 } from '../utils/contextManager';
 
+// Icons for the chat panel header
+const Icons = {
+  Revert: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+    </svg>
+  ),
+  Clear: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  )
+};
+
 // Types
 import type { FileNode } from './FileExplorer';
 
@@ -36,6 +50,9 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
     type: 'system',
     timestamp: new Date()
   }]);
+  
+  // State to check if we can revert
+  const [canRevert, setCanRevert] = useState(false);
   
   // State for context management
   const [showContextModal, setShowContextModal] = useState(false);
@@ -114,6 +131,18 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
       setActiveFileId(stateToRevert.activeFileId);
       setActiveFile(stateToRevert.files.find(file => file.id === stateToRevert.activeFileId) || null);
       setChatMessages(stateToRevert.messages);
+    }
+  };
+  
+  // Button handler for revert
+  const handleRevertClick = () => {
+    const savedState = getCodeAndChatState();
+    if (savedState) {
+      handleRevertState({
+        files: savedState.files,
+        activeFileId: savedState.activeFileId,
+        messages: savedState.chatMessages
+      });
     }
   };
   
@@ -363,19 +392,19 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files);
-      setSelectedImages(prev => [...prev, ...newFiles]);
       
-      // Create preview for the first image if no preview exists
-      if (!imagePreview) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          if (e.target?.result) {
-            setImagePreview(e.target.result as string);
-            setImagePreviewIndex(0);
-          }
-        };
-        reader.readAsDataURL(newFiles[0]);
-      }
+      // If we're uploading just one image at a time, replace selection instead of adding
+      setSelectedImages(newFiles);
+      
+      // Create preview for the first image
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          setImagePreview(e.target.result as string);
+          setImagePreviewIndex(0);
+        }
+      };
+      reader.readAsDataURL(newFiles[0]);
     }
   };
   
@@ -461,34 +490,50 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
     setGenerationTotal(selectedImages.length);
     
     try {
-      // Process each image to generate different pages
-      const newFiles: FileNode[] = [];
+      // Process each image to generate a new page
+      const newFiles: FileNode[] = [...files]; // Start with existing files
+      
+      // Check if this is a new user (only has default template file or no files)
+      const isNewUser = files.length === 0 || 
+        (files.length === 1 && 
+         files[0].name === 'index.html' && 
+         files[0].content?.includes('Welcome to the IDE'));
+      
+      // Count existing index pages to determine numbering
+      const existingIndexPages = files
+        .filter(file => file.type === 'file' && file.language === 'html')
+        .map(file => file.name)
+        .filter(name => name.startsWith('index') || name === 'index.html');
+      
+      // Base index number for new pages
+      let indexCounter = existingIndexPages.length;
       
       for (let i = 0; i < selectedImages.length; i++) {
         const image = selectedImages[i];
         setGenerationProgress(i + 1);
         
-        // Determine page name for this image
-        let pageFileName = pageName;
-        if (selectedImages.length > 1) {
-          pageFileName = i === 0 ? 'index' : `${pageName}-${i}`;
+        // For new users with no content, overwrite the index.html
+        // For existing users who have generated content, create new pages
+        let pageFileName;
+        if (isNewUser && i === 0) {
+          pageFileName = 'index';
+          
+          // Remove the default template file if it exists
+          const defaultIndexFileIndex = newFiles.findIndex(
+            file => file.name === 'index.html' && file.content?.includes('Welcome to the IDE')
+          );
+          
+          if (defaultIndexFileIndex !== -1) {
+            newFiles.splice(defaultIndexFileIndex, 1);
+          }
+        } else {
+          // For users with existing content or additional images, create new pages
+          pageFileName = `index-${indexCounter + 1}`;
+          indexCounter++;
         }
         
-        // Create custom prompt for each page
-        let pagePrompt = promptText;
-        if (selectedImages.length > 1) {
-          if (i === 0) {
-            pagePrompt = `${promptText} Create a home/landing page.`;
-          } else if (i === 1) {
-            pagePrompt = `${promptText} Create an about page.`;
-          } else if (i === 2) {
-            pagePrompt = `${promptText} Create a services/features page.`;
-          } else if (i === 3) {
-            pagePrompt = `${promptText} Create a contact page.`;
-          } else {
-            pagePrompt = `${promptText} Create page ${i+1}.`;
-          }
-        }
+        // Create custom prompt for the image
+        let pagePrompt = promptText || 'Create a responsive page with Tailwind CSS';
         
         // Create FormData with the image and prompt
         const formData = new FormData();
@@ -517,10 +562,14 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
           
           newFiles.push(htmlFile);
           
+          // Set as active file
+          setActiveFileId(htmlId);
+          setActiveFile(htmlFile);
+          
           // Create CSS file if there's CSS content
           if (result.css) {
             const cssId = generateUniqueId();
-            const cssFileName = selectedImages.length > 1 ? 'styles' : `${pageFileName}-styles`;
+            const cssFileName = `${pageFileName}-styles`;
             const cssFile: FileNode = {
               id: cssId,
               name: `${cssFileName}.css`,
@@ -530,17 +579,13 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
               dateCreated: new Date()
             };
             
-            // Check if we already have a CSS file with the same name
-            const existingCssFile = newFiles.find(f => f.name === `${cssFileName}.css`);
-            if (!existingCssFile) {
-              newFiles.push(cssFile);
-            }
+            newFiles.push(cssFile);
           }
           
           // Create JS file if there's JS content
           if (result.js) {
             const jsId = generateUniqueId();
-            const jsFileName = selectedImages.length > 1 ? 'scripts' : `${pageFileName}-script`;
+            const jsFileName = `${pageFileName}-script`;
             const jsFile: FileNode = {
               id: jsId,
               name: `${jsFileName}.js`,
@@ -550,30 +595,37 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
               dateCreated: new Date()
             };
             
-            // Check if we already have a JS file with the same name
-            const existingJsFile = newFiles.find(f => f.name === `${jsFileName}.js`);
-            if (!existingJsFile) {
-              newFiles.push(jsFile);
-            }
+            newFiles.push(jsFile);
           }
         } else {
           throw new Error(result.error || `Failed to generate code from image ${i+1}`);
         }
       }
       
-      if (newFiles.length > 0) {
-        setFiles(newFiles);
-        setActiveFileId(newFiles[0].id);
-        setActiveFile(newFiles[0]);
-        setShowImageUploadModal(false);
+      // Update files with all new files
+      setFiles(newFiles);
+      setShowImageUploadModal(false);
+      
+      // Reset upload state
+      setSelectedImages([]);
+      setImagePreview(null);
+      setImagePreviewIndex(0);
+      setPromptText('');
+      setPageName('index');
+      
+      // Add a message to the chat about the new page creation
+      const message = isNewUser ? 
+        `Created your website from the image. You can edit it now.` :
+        `Added ${selectedImages.length} new page(s) to your project. You can edit and preview them now.`;
         
-        // Reset upload state
-        setSelectedImages([]);
-        setImagePreview(null);
-        setImagePreviewIndex(0);
-        setPromptText('');
-        setPageName('index');
-      }
+      const newMessage: ChatMessage = {
+        id: `system-${Date.now()}`,
+        content: message,
+        type: 'system',
+        timestamp: new Date()
+      };
+      
+      setChatMessages(prev => [...prev, newMessage]);
     } catch (error) {
       console.error('Failed to generate from image:', error);
       alert('Failed to generate code from image. Please try again.');
@@ -698,6 +750,24 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   
+  // Clear chat messages
+  const handleClearMessages = () => {
+    // Keep only the system welcome message
+    const welcomeMessage = chatMessages.find(msg => msg.id === 'system-welcome');
+    if (welcomeMessage) {
+      setChatMessages([welcomeMessage]);
+    } else {
+      // Create a new welcome message if it doesn't exist
+      const newWelcomeMessage: ChatMessage = {
+        id: 'system-welcome',
+        content: 'Welcome to the AI code assistant. Ask about the current code, request modifications, or ask for help.',
+        type: 'system',
+        timestamp: new Date()
+      };
+      setChatMessages([newWelcomeMessage]);
+    }
+  };
+  
   return (
     <div className="h-screen flex flex-col bg-gray-900">
       {/* Top Bar */}
@@ -706,40 +776,6 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
           <span className="text-gray-100 font-semibold ml-2">LLAMA Website Builder</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Context management buttons */}
-          <button 
-            onClick={() => setShowContextModal(true)}
-            className="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 px-3 rounded flex items-center gap-1"
-            title="Save current context"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-            </svg>
-            Save Context
-          </button>
-          <button 
-            onClick={() => {
-              setSavedContexts(getContextList());
-              setShowContextListModal(true);
-            }}
-            className="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 px-3 rounded flex items-center gap-1"
-            title="Load saved context"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l3-3m-3 3V4" />
-            </svg>
-            Load Context
-          </button>
-          
-          <button 
-            onClick={() => setShowImageUploadModal(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm py-1 px-3 rounded flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            Generate from Image
-          </button>
           <button 
             onClick={() => setShowCreateDialog(true)}
             className="bg-gray-700 hover:bg-gray-600 text-white text-sm py-1 px-3 rounded flex items-center gap-1"
@@ -987,7 +1023,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
                       />
                     </label>
                     <p className="text-xs text-gray-400 mt-2">
-                      Upload multiple images to create multiple pages (index, about, etc.)
+                      Upload multiple images to create multiple pages
                     </p>
                   </>
                 )}
@@ -1011,45 +1047,13 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
                     </button>
                   </div>
                   
-                  <div className="flex flex-wrap gap-2">
-                    {selectedImages.map((img, idx) => (
-                      <div 
-                        key={idx} 
-                        className={`relative rounded p-1 ${idx === imagePreviewIndex ? 'bg-blue-800' : 'bg-gray-800'}`}
-                      >
-                        <div className="text-xs text-gray-300 truncate max-w-[80px]" title={img.name}>
-                          {idx === 0 ? 'index' : idx === 1 ? 'about' : idx === 2 ? 'services' : idx === 3 ? 'contact' : `page-${idx}`}
-                        </div>
-                        <button 
-                          onClick={() => removeImage(idx)}
-                          className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5 text-white"
-                        >
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    {files.length <= 1 && files.some(file => file.content?.includes('Welcome to the IDE')) ? 
+                      "Your first upload will create the main index.html page." : 
+                      "Pages will be named: index-2.html, index-3.html, etc."}
+                  </p>
                 </div>
               )}
-              
-              {/* Page Name Input */}
-              <div className="mt-4">
-                <label className="block text-sm font-medium mb-2">
-                  Base Page Name
-                </label>
-                <input
-                  type="text"
-                  value={pageName}
-                  onChange={(e) => setPageName(e.target.value.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase())}
-                  placeholder="e.g., index, about, etc."
-                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-sm text-white"
-                />
-                <p className="mt-1 text-xs text-gray-400">
-                  For multiple images: First image becomes index.html, others will be {pageName}-1.html, {pageName}-2.html, etc.
-                </p>
-              </div>
               
               {/* Prompt Text Area */}
               <div>
@@ -1203,16 +1207,50 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
         
         {/* Chat Panel (Right Panel) */}
         <div className="w-96">
-          <ChatPanel 
-            currentFileContent={activeFile?.content}
-            files={files}
-            activeFileId={activeFileId}
-            onApplyHtml={handleApplyHtml}
-            onSendMessage={handleSendMessage}
-            onRevertState={handleRevertState}
-            messages={chatMessages}
-            onMessagesUpdate={handleChatMessagesUpdate}
-          />
+          <div className="h-full flex flex-col bg-gray-800 border-l border-gray-700">
+            {/* Chat Header */}
+            <div className="p-3 border-b border-gray-700 flex justify-between items-center">
+              <span className="text-sm font-semibold text-gray-200">AI Assistant</span>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setShowImageUploadModal(true)}
+                  className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+                  title="Generate from Image"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                {canRevert && (
+                  <button 
+                    onClick={handleRevertClick} 
+                    className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+                    title="Revert to previous state"
+                  >
+                    <Icons.Revert />
+                  </button>
+                )}
+                <button 
+                  onClick={handleClearMessages} 
+                  className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+                  title="Clear conversation"
+                >
+                  <Icons.Clear />
+                </button>
+              </div>
+            </div>
+            
+            <ChatPanel 
+              currentFileContent={activeFile?.content}
+              files={files}
+              activeFileId={activeFileId}
+              onApplyHtml={handleApplyHtml}
+              onSendMessage={handleSendMessage}
+              onRevertState={handleRevertState}
+              messages={chatMessages}
+              onMessagesUpdate={handleChatMessagesUpdate}
+            />
+          </div>
         </div>
       </div>
     </div>
