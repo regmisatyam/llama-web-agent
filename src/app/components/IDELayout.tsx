@@ -1187,7 +1187,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* File Explorer (Left Panel) */}
-        <div className="w-64 border-r border-gray-700">
+        <div className="w-64 border-r border-gray-700 mt-10">
           <FileExplorer 
             files={files} 
             activeFileId={activeFileId} 
@@ -1248,7 +1248,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
         <div className="w-96">
           <div className="h-full flex flex-col bg-gray-800 border-l border-gray-700">
             {/* Chat Header */}
-            <div className="p-3 border-b border-gray-700 flex justify-between items-center">
+            <div className="p-3 border-b border-gray-700 flex justify-between items-center mt-10">
               <span className="text-sm font-semibold text-gray-200">AI Assistant</span>
               <div className="flex items-center gap-2">
                 <button 
