@@ -107,6 +107,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // State for showing confirmation message
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState('');
+
   // Auto scroll to bottom on new messages
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -543,7 +547,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                     </button>
                     {(part.language === 'html' || part.language === 'css' || part.language === 'js' || part.language === 'javascript') && (
                       <button 
-                        onClick={() => onApplyHtml(part.content)}
+                        onClick={(e) => {
+                          handleCodeBlockExpand(e);
+                          onApplyHtml(part.content);
+                          // Show confirmation message
+                          setConfirmationMessage(`${part.language?.toUpperCase() || 'CODE'} applied successfully!`);
+                          setShowConfirmation(true);
+                          // Hide after 3 seconds
+                          setTimeout(() => {
+                            setShowConfirmation(false);
+                          }, 3000);
+                        }}
                         className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded flex items-center gap-1"
                       >
                         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -780,8 +794,34 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     }, 300);
   };
 
+  // Handle applying HTML changes from chat
+  const handleApplyHtml = (html: string) => {
+    if (activeFileId) {
+      onApplyHtml(html);
+      // Show confirmation message
+      setConfirmationMessage('Changes applied successfully!');
+      setShowConfirmation(true);
+      // Hide after 3 seconds
+      setTimeout(() => {
+        setShowConfirmation(false);
+      }, 3000);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col bg-gray-800">
+      {/* Confirmation Message */}
+      {showConfirmation && (
+        <div className="bg-green-600 text-white p-2 text-center text-sm confirmation-message fixed top-4 left-1/2 transform -translate-x-1/2 rounded-md shadow-lg z-50 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {confirmationMessage}
+          </div>
+        </div>
+      )}
+      
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 chat-messages" style={{ 
         scrollBehavior: 'smooth', 
@@ -836,7 +876,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                         Copy
                       </button>
                       <button
-                        onClick={() => onApplyHtml(message.htmlSuggestion!)}
+                        onClick={(e) => {
+                          handleCodeBlockExpand(e);
+                          onApplyHtml(message.htmlSuggestion!);
+                          // Show confirmation message
+                          setConfirmationMessage('HTML suggestion applied successfully!');
+                          setShowConfirmation(true);
+                          // Hide after 3 seconds
+                          setTimeout(() => {
+                            setShowConfirmation(false);
+                          }, 3000);
+                        }}
                         className="flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
                       >
                         <Icons.Apply />
@@ -956,8 +1006,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes fadeOut {
+          from { opacity: 1; }
+          to { opacity: 0; }
+        }
         .animate-fade-in {
           animation: fadeIn 0.3s ease-out forwards;
+        }
+        .animate-fade-out {
+          animation: fadeOut 0.5s ease-out forwards;
+        }
+        .confirmation-message {
+          animation: fadeIn 0.3s ease-out, fadeOut 0.5s ease-out 2.5s;
         }
         .chat-messages .message:last-child {
           animation: fadeIn 0.5s ease-out forwards;
