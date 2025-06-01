@@ -275,6 +275,9 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
   // Handle AI chat
   const handleSendMessage = async (message: string) => {
     try {
+      // This function is now simplified since the ChatPanel handles the actual API call
+      // But we keep it for compatibility with other components that might use it
+      
       // Build context with information about all files
       let contextInfo: any = {};
       
@@ -345,6 +348,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
         }));
       }
       
+      // Call the chat API directly
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -356,8 +360,7 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
         }),
       });
       
-      const result = await response.json();
-      return result;
+      return await response.json();
     } catch (error) {
       console.error('Chat error:', error);
       throw error;

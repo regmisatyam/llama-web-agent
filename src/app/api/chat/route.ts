@@ -23,9 +23,32 @@ export async function POST(request: NextRequest) {
     // Check if API key is configured
     if (!process.env.LLAMA_API_KEY || !llamaAPI) {
       console.log('🔑 LLAMA_API_KEY not configured, returning demo response');
+      
+      // Extract the user's question
+      const userQuestion = messages.find((msg: { role: string; content: string }) => msg.role === 'user')?.content || '';
+      
+      // Create a more detailed demo response
+      let demoResponse = "I'm currently in demo mode because the LLAMA API key is not configured. ";
+      
+      // Add code examples for different query types
+      if (userQuestion.toLowerCase().includes('html') || userQuestion.toLowerCase().includes('code')) {
+        demoResponse += "Here's an example of how I would respond to your code question:\n\n";
+        demoResponse += "Here's a simple HTML structure you could use:\n\n";
+        demoResponse += "```html\n<div class=\"container mx-auto p-4\">\n  <h1 class=\"text-2xl font-bold mb-4\">Hello World</h1>\n  <p>This is a paragraph with some text content.</p>\n</div>\n```\n\n";
+        demoResponse += "You can customize this to match your specific needs.";
+      } else if (userQuestion.toLowerCase().includes('css')) {
+        demoResponse += "Here's an example of CSS code I could provide:\n\n";
+        demoResponse += "```css\n.container {\n  max-width: 1200px;\n  margin: 0 auto;\n  padding: 1rem;\n}\n\n.header {\n  background-color: #f8f9fa;\n  padding: 1rem;\n  border-bottom: 1px solid #e9ecef;\n}\n```";
+      } else if (userQuestion.toLowerCase().includes('javascript') || userQuestion.toLowerCase().includes('js')) {
+        demoResponse += "Here's an example of JavaScript code I could provide:\n\n";
+        demoResponse += "```javascript\ndocument.addEventListener('DOMContentLoaded', () => {\n  const button = document.getElementById('myButton');\n  button.addEventListener('click', () => {\n    console.log('Button clicked!');\n  });\n});\n```";
+      } else {
+        demoResponse += "In production mode, I can help you with web development questions, modify HTML/CSS/JS code, and provide guidance on best practices. Please configure the LLAMA_API_KEY to enable full functionality.";
+      }
+      
       return NextResponse.json({
         success: true,
-        message: "I'm currently in demo mode. In production, I can help you modify the generated HTML, answer questions about web development, or assist with any other requests!",
+        message: demoResponse,
         demo: true
       });
     }
