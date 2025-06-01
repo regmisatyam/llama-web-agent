@@ -62,6 +62,7 @@ interface Message {
   content: string;
   timestamp: Date;
   imageUrl?: string;
+  imageUrls?: string[]; // For multiple images
   generatedHtml?: string;
   isLoading?: boolean;
   processingStep?: string;
@@ -145,7 +146,7 @@ export default function HomePage() {
       messages: [{
         id: generateUniqueId(),
         type: 'system',
-        content: 'Welcome! Upload a website screenshot and I\'ll generate responsive HTML code for you.',
+        content: 'Welcome! Upload up to 4 website screenshots and I\'ll generate a responsive multi-page HTML website for you. Each image will be processed as a separate page with navigation.',
         timestamp: new Date()
       }],
       createdAt: new Date()
@@ -254,68 +255,149 @@ export default function HomePage() {
     setEditingCode('');
   };
 
-  const handleFileUpload = async (file: File) => {
-    if (!activeConversationId) return;
+  const handleFileUpload = async (files: File[]) => {
+    if (!activeConversationId || files.length === 0) return;
+
+    // Limit to 4 files
+    const filesToProcess = files.slice(0, 4);
+    
+    if (files.length > 4) {
+      alert('Maximum 4 images allowed. Only the first 4 will be processed.');
+    }
 
     setIsUploading(true);
     
-    // Add user message with image
-    const imageUrl = URL.createObjectURL(file);
+    // Create image URLs for all files
+    const imageUrls = filesToProcess.map(file => URL.createObjectURL(file));
+    const fileNames = filesToProcess.map(file => file.name).join(', ');
+    
+    // Add user message with multiple images
     addMessage(activeConversationId, {
       type: 'user',
-      content: `Generate a website from this screenshot: ${file.name}`,
-      imageUrl
+      content: `Generate a website from these ${filesToProcess.length} screenshots: ${fileNames}`,
+      imageUrls: imageUrls
     });
 
     // Add loading assistant message
     const loadingMessageId = addMessage(activeConversationId, {
       type: 'assistant',
-      content: 'Analyzing your image and generating HTML...',
+      content: `Analyzing ${filesToProcess.length} images and generating HTML...`,
       isLoading: true,
-      processingStep: 'Uploading image...'
+      processingStep: 'Uploading images...'
     });
     
     console.log('🔄 Loading message created with actual ID:', loadingMessageId);
 
-    updateConversationTitle(activeConversationId, file.name);
+    updateConversationTitle(activeConversationId, `${filesToProcess.length} pages from ${filesToProcess[0].name}`);
 
     try {
-      const formData = new FormData();
-      formData.append('image', file);
+      // Process each image and collect results
+      const allResults = [];
+      let allHtmlSections = [];
+      let allAnalyses = [];
+      
+      for (let i = 0; i < filesToProcess.length; i++) {
+        const file = filesToProcess[i];
+        updateMessage(activeConversationId, loadingMessageId, {
+          processingStep: `Processing image ${i + 1} of ${filesToProcess.length}: ${file.name}...`
+        });
+        
+        const formData = new FormData();
+        formData.append('image', file);
 
-      const response = await fetch('/api/generate-html', {
-        method: 'POST',
-        body: formData,
-      });
+        const response = await fetch('/api/generate-html', {
+          method: 'POST',
+          body: formData,
+        });
 
-      const result = await response.json();
+        const result = await response.json();
+        
+        if (result.success) {
+          allResults.push(result);
+          allHtmlSections.push(`<!-- Page ${i + 1}: ${file.name} -->\n${result.html}`);
+          if (result.analysis) {
+            allAnalyses.push(`**Page ${i + 1} (${file.name}):**\n${result.analysis}`);
+          }
+        } else {
+          console.error(`❌ Generation failed for ${file.name}:`, result);
+          allHtmlSections.push(`<!-- Page ${i + 1}: ${file.name} - FAILED -->\n<div>Error generating content for this page</div>`);
+        }
+      }
 
-      if (result.success) {
+      // Combine all HTML sections into a multi-page website
+      const combinedHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Page Generated Website</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .page-section {
+            min-height: 100vh;
+            position: relative;
+        }
+        .page-divider {
+            height: 4px;
+            background: linear-gradient(to right, #3B82F6, #8B5CF6);
+            margin: 2rem 0;
+        }
+        .page-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-indicator">
+        ${filesToProcess.length} Pages Combined
+    </div>
+    ${allHtmlSections.map((html, index) => `
+    <section class="page-section" id="page-${index + 1}">
+        ${html}
+        ${index < allHtmlSections.length - 1 ? '<div class="page-divider"></div>' : ''}
+    </section>
+    `).join('\n')}
+    
+    <!-- Navigation -->
+    <div class="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white rounded-full px-6 py-3 shadow-lg">
+        ${filesToProcess.map((file, index) => 
+          `<a href="#page-${index + 1}" class="mx-2 hover:text-blue-400">Page ${index + 1}</a>`
+        ).join(' | ')}
+    </div>
+</body>
+</html>`;
+
+      if (allResults.length > 0) {
         // Update the loading message with success
         updateMessage(activeConversationId, loadingMessageId, {
-          content: `✅ Successfully generated responsive HTML code from ${file.name}!`,
+          content: `✅ Successfully generated responsive HTML from ${filesToProcess.length} images!`,
           isLoading: false,
-          generatedHtml: result.html,
+          generatedHtml: combinedHtml,
           processingStep: undefined
         });
 
-        console.log('✅ HTML generated successfully:', {
-          hasHtml: !!result.html,
-          htmlLength: result.html?.length || 0,
-          filename: file.name
+        console.log('✅ Multi-page HTML generated successfully:', {
+          pageCount: filesToProcess.length,
+          totalHtmlLength: combinedHtml.length
         });
 
-        // Add analysis if available
-        if (result.analysis) {
+        // Add combined analysis if available
+        if (allAnalyses.length > 0) {
           addMessage(activeConversationId, {
             type: 'assistant',
-            content: `**Image Analysis:**\n${result.analysis}`
+            content: `**Combined Image Analysis:**\n\n${allAnalyses.join('\n\n')}`
           });
         }
       } else {
-        console.error('❌ Generation failed:', result);
         updateMessage(activeConversationId, loadingMessageId, {
-          content: `❌ Generation failed: ${result.message || 'Unknown error'}`,
+          content: `❌ Generation failed for all images`,
           isLoading: false,
           processingStep: undefined
         });
@@ -334,9 +416,9 @@ export default function HomePage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files);
-    const imageFile = files.find(file => file.type.startsWith('image/'));
-    if (imageFile) {
-      handleFileUpload(imageFile);
+    const imageFiles = files.filter(file => file.type.startsWith('image/'));
+    if (imageFiles.length > 0) {
+      handleFileUpload(imageFiles);
     }
   };
 
@@ -449,13 +531,41 @@ export default function HomePage() {
                   >
                     {/* Message Content */}
                     <div className="space-y-4">
-                      {message.imageUrl && (
+                      {/* Single image display (legacy support) */}
+                      {message.imageUrl && !message.imageUrls && (
                         <div className="rounded-lg overflow-hidden">
                           <img
                             src={message.imageUrl}
                             alt="Uploaded screenshot"
                             className="max-w-full h-auto max-h-64 object-contain"
                           />
+                        </div>
+                      )}
+
+                      {/* Multiple images display */}
+                      {message.imageUrls && message.imageUrls.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="text-sm text-gray-600 mb-2">
+                            {message.imageUrls.length} images uploaded
+                          </div>
+                          <div className={`grid gap-2 ${
+                            message.imageUrls.length === 1 ? 'grid-cols-1' :
+                            message.imageUrls.length === 2 ? 'grid-cols-2' :
+                            'grid-cols-2'
+                          }`}>
+                            {message.imageUrls.map((url, index) => (
+                              <div key={index} className="relative group">
+                                <img
+                                  src={url}
+                                  alt={`Screenshot ${index + 1}`}
+                                  className="w-full h-auto max-h-48 object-cover rounded-lg border border-gray-200"
+                                />
+                                <div className="absolute bottom-2 left-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
+                                  Page {index + 1}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -653,7 +763,7 @@ export default function HomePage() {
                   <Icons.Photo />
                 </div>
                 <p className="text-gray-600 mb-4">
-                  Drag and drop a website screenshot here, or click to upload
+                  Drag and drop up to 4 website screenshots here, or click to upload multiple
                 </p>
                 <button
                   onClick={() => fileInputRef.current?.click()}
@@ -661,18 +771,25 @@ export default function HomePage() {
                   className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Icons.Photo />
-                  {isUploading ? 'Uploading...' : 'Choose Image'}
+                  {isUploading ? 'Uploading...' : 'Choose Images (Max 4)'}
                 </button>
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   className="hidden"
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFileUpload(file);
+                    const files = e.target.files;
+                    if (files) {
+                      const fileArray = Array.from(files);
+                      handleFileUpload(fileArray);
+                    }
                   }}
                 />
+                <p className="text-xs text-gray-500 mt-2">
+                  Supported: PNG, JPG, JPEG • Max 4 images • Each page will be processed separately
+                </p>
               </div>
             </div>
           </>
