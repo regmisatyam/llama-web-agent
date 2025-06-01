@@ -53,6 +53,11 @@ const Icons = {
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
     </svg>
+  ),
+  Send: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+    </svg>
   )
 };
 
@@ -85,8 +90,11 @@ export default function HomePage() {
   const [showPreview, setShowPreview] = useState<string | null>(null);
   const [editingCode, setEditingCode] = useState<string>('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Counter for unique IDs
   const messageIdCounter = useRef(0);
@@ -146,7 +154,7 @@ export default function HomePage() {
       messages: [{
         id: generateUniqueId(),
         type: 'system',
-        content: 'Welcome! Upload up to 4 website screenshots and I\'ll generate a responsive multi-page HTML website for you. Each image will be processed as a separate page with navigation.',
+        content: 'Welcome! I can help you generate websites from screenshots and answer questions about web development. Upload up to 4 images to create a multi-page website, or just start chatting!',
         timestamp: new Date()
       }],
       createdAt: new Date()
@@ -452,6 +460,122 @@ export default function HomePage() {
     }
   }, [conversations.length]);
 
+  const handleSendChat = async () => {
+    if (!activeConversationId || !chatInput.trim() || isSendingChat) return;
+
+    const userMessage = chatInput.trim();
+    setChatInput('');
+    setIsSendingChat(true);
+
+    // Add user message
+    addMessage(activeConversationId, {
+      type: 'user',
+      content: userMessage
+    });
+
+    // Add loading assistant message
+    const loadingMessageId = addMessage(activeConversationId, {
+      type: 'assistant',
+      content: 'Thinking...',
+      isLoading: true
+    });
+
+    try {
+      // Get conversation history for context
+      const conversation = conversations.find(c => c.id === activeConversationId);
+      const recentMessages = conversation?.messages.slice(-10) || []; // Last 10 messages for context
+      
+      // Find ALL generated HTML messages to track modifications
+      const allGeneratedHtml = conversation?.messages
+        .filter(m => m.generatedHtml)
+        .map(m => ({
+          html: m.generatedHtml,
+          message: m.content,
+          timestamp: m.timestamp
+        })) || [];
+      
+      // Get the most recent generated HTML
+      const lastGeneratedHtml = allGeneratedHtml[allGeneratedHtml.length - 1]?.html;
+
+      // Prepare messages for API with full context
+      const apiMessages = recentMessages
+        .filter(m => m.type !== 'system' && !m.isLoading)
+        .map(m => ({
+          role: m.type === 'user' ? 'user' : 'assistant',
+          content: m.content
+        }));
+
+      // Add context about HTML modification history
+      const contextInfo: any = {};
+      if (lastGeneratedHtml) {
+        contextInfo.generatedHtml = lastGeneratedHtml;
+        contextInfo.modificationCount = allGeneratedHtml.length;
+        contextInfo.hasBeenModified = allGeneratedHtml.length > 1;
+      }
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: apiMessages,
+          context: contextInfo
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Check if the response contains generated HTML
+        if (result.generatedHtml) {
+          // Update the message with both the text and the generated HTML
+          updateMessage(activeConversationId, loadingMessageId, {
+            content: result.message,
+            generatedHtml: result.generatedHtml,
+            isLoading: false
+          });
+          
+          console.log('💡 HTML code update detected from chat');
+          
+          // Update conversation title if it's a modification
+          const currentTitle = conversations.find(c => c.id === activeConversationId)?.title || '';
+          if (!currentTitle.includes('(Modified)')) {
+            updateConversationTitle(activeConversationId, currentTitle + ' (Modified)');
+          }
+        } else {
+          // Regular text response
+          updateMessage(activeConversationId, loadingMessageId, {
+            content: result.message,
+            isLoading: false
+          });
+        }
+      } else {
+        updateMessage(activeConversationId, loadingMessageId, {
+          content: result.message || 'Sorry, I encountered an error. Please try again.',
+          isLoading: false
+        });
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      updateMessage(activeConversationId, loadingMessageId, {
+        content: 'Sorry, I encountered an error. Please try again.',
+        isLoading: false
+      });
+    } finally {
+      setIsSendingChat(false);
+      // Focus back on input
+      setTimeout(() => chatInputRef.current?.focus(), 100);
+    }
+  };
+
+  const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendChat();
+    }
+  };
+
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
@@ -754,42 +878,86 @@ export default function HomePage() {
 
             {/* Input Area */}
             <div className="p-6 border-t border-gray-200 bg-white">
-              <div
-                onDrop={handleDrop}
-                onDragOver={(e) => e.preventDefault()}
-                className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-400 transition-colors"
-              >
-                <div className="mx-auto mb-4 text-gray-400">
-                  <Icons.Photo />
+              <div className="space-y-4">
+                {/* Chat Input */}
+                <div className="flex gap-2">
+                  <textarea
+                    ref={chatInputRef}
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={handleChatKeyDown}
+                    placeholder="Ask a question, request modifications, or chat about web development..."
+                    className="flex-1 resize-none rounded-lg border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-h-[50px] max-h-[200px]"
+                    rows={1}
+                    disabled={isSendingChat}
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    disabled={!chatInput.trim() || isSendingChat}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                  >
+                    {isSendingChat ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Icons.Send />
+                        Send
+                      </>
+                    )}
+                  </button>
                 </div>
-                <p className="text-gray-600 mb-4">
-                  Drag and drop up to 4 website screenshots here, or click to upload multiple
-                </p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+
+                {/* Divider */}
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-200"></div>
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="bg-white px-4 text-gray-500">or upload images</span>
+                  </div>
+                </div>
+
+                {/* Image Upload Area */}
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => e.preventDefault()}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-blue-400 transition-colors"
                 >
-                  <Icons.Photo />
-                  {isUploading ? 'Uploading...' : 'Choose Images (Max 4)'}
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    const files = e.target.files;
-                    if (files) {
-                      const fileArray = Array.from(files);
-                      handleFileUpload(fileArray);
-                    }
-                  }}
-                />
-                <p className="text-xs text-gray-500 mt-2">
-                  Supported: PNG, JPG, JPEG • Max 4 images • Each page will be processed separately
-                </p>
+                  <div className="mx-auto mb-2 text-gray-400">
+                    <Icons.Photo />
+                  </div>
+                  <p className="text-gray-600 mb-2 text-sm">
+                    Drag and drop up to 4 website screenshots here
+                  </p>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    <Icons.Photo />
+                    {isUploading ? 'Uploading...' : 'Choose Images'}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files) {
+                        const fileArray = Array.from(files);
+                        handleFileUpload(fileArray);
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    PNG, JPG, JPEG • Max 4 images
+                  </p>
+                </div>
               </div>
             </div>
           </>
