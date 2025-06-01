@@ -200,3 +200,76 @@ The application requires **vision-capable** Llama models for image analysis:
 
 ### **How to Check if a Model Supports Vision:**
 Look for **"vision"** in the model name or check the [official documentation](https://llama.developer.meta.com/docs/models) for "Multimodal" or "Vision" capabilities.
+
+# LLAMA Website Builder
+
+A powerful web application that generates complete websites from images using LLAMA AI.
+
+## Features
+
+### Website Generation
+- Upload images to generate responsive HTML, CSS, and JavaScript code
+- Support for multiple images to create multi-page websites
+- Real-time preview of generated code
+- Custom prompts for AI generation
+
+### IDE Features
+- VS Code-like editor with syntax highlighting
+- File explorer for managing multiple files
+- Live preview of changes
+- Multi-page website navigation
+
+### AI Assistance
+- Chat with LLAMA AI to help modify your code
+- AI understands your entire project structure
+- Get help with specific code changes or features
+
+### Auto-Save & Revert
+- Automatic saving of your code and chat history
+- No need to manually save your work
+- Revert to previous state if needed with a single click
+- Chat history is preserved between sessions
+
+## Getting Started
+
+1. Clone this repository
+2. Install dependencies:
+   ```
+   npm install
+   ```
+3. Start the development server:
+   ```
+   npm run dev
+   ```
+4. Open your browser to http://localhost:3000
+
+## How to Use
+
+1. **Generate a website from images**
+   - Click "Generate from Image" in the IDE
+   - Upload one or more images
+   - Add optional prompts for better results
+   - Wait for the AI to generate your website
+
+2. **Edit your code**
+   - Use the file explorer to navigate between files
+   - Make changes in the code editor
+   - See real-time preview with the Preview button
+
+3. **Get AI help**
+   - Use the chat panel to ask LLAMA for help
+   - Ask for code modifications or explanations
+   - Apply suggested changes with a single click
+
+4. **Auto-Save & Revert**
+   - Your code and chat history are automatically saved
+   - Use the revert button (↩️) to go back to previous state
+   - Clear chat history while preserving your code
+
+## Technologies Used
+
+- Next.js
+- React
+- Tailwind CSS
+- LLAMA AI API
+- Monaco Editor (VS Code editor)

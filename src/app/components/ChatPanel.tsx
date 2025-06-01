@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { getContextList, IDEContext, saveCodeAndChatState, getCodeAndChatState, ChatMessage } from '../utils/contextManager';
 
 // Icons for the chat panel
 const Icons = {
@@ -36,39 +37,47 @@ const Icons = {
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
     </svg>
+  ),
+  Revert: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+    </svg>
   )
 };
 
-interface Message {
-  id: string;
-  content: string;
-  type: 'user' | 'assistant' | 'system';
-  timestamp: Date;
+interface Message extends ChatMessage {
   isLoading?: boolean;
-  htmlSuggestion?: string;
 }
 
 interface ChatPanelProps {
   currentFileContent?: string;
+  files: any[];
+  activeFileId: string | null;
   onApplyHtml: (html: string) => void;
   onSendMessage: (message: string) => Promise<any>;
+  onRevertState: (stateToRevert: {
+    files: any[];
+    activeFileId: string | null;
+    messages: Message[];
+  }) => void;
+  messages: Message[];
+  onMessagesUpdate: (messages: Message[]) => void;
 }
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ 
   currentFileContent, 
+  files,
+  activeFileId,
   onApplyHtml, 
-  onSendMessage 
+  onSendMessage,
+  onRevertState,
+  messages,
+  onMessagesUpdate
 }) => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'system-welcome',
-      content: 'Welcome to the AI code assistant. Ask about the current code, request modifications, or ask for help.',
-      type: 'system',
-      timestamp: new Date()
-    }
-  ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [savedContexts, setSavedContexts] = useState<IDEContext[]>([]);
+  const [canRevert, setCanRevert] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +86,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+  
+  // Load saved contexts on mount
+  useEffect(() => {
+    setSavedContexts(getContextList());
+    
+    // Check if we can revert
+    const savedState = getCodeAndChatState();
+    if (savedState) {
+      setCanRevert(true);
+    }
+  }, []);
 
   // Auto resize textarea
   useEffect(() => {
@@ -85,6 +105,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [inputValue]);
+  
+  // Handle reverting to the previous state
+  const handleRevert = () => {
+    const savedState = getCodeAndChatState();
+    if (savedState) {
+      onRevertState({
+        files: savedState.files,
+        activeFileId: savedState.activeFileId,
+        messages: savedState.chatMessages as Message[]
+      });
+    }
+  };
 
   const handleSend = async () => {
     if (!inputValue.trim() || isLoading) return;
@@ -104,14 +136,26 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       isLoading: true
     };
     
-    setMessages(prev => [...prev, userMessage, loadingMessage]);
+    // Update messages through the parent component
+    onMessagesUpdate([...messages, userMessage, loadingMessage]);
     setInputValue('');
     setIsLoading(true);
     
     try {
+      // Include saved contexts information in the request
+      // Note: We're only sending metadata about contexts, not the full content
+      // to avoid making the request too large
+      const contextsMetadata = savedContexts.map(ctx => ({
+        id: ctx.id,
+        name: ctx.name,
+        timestamp: ctx.timestamp,
+        fileCount: ctx.files.length,
+      }));
+      
       const response = await onSendMessage(inputValue);
       
-      setMessages(prev => prev.map(msg => 
+      // Create updated messages array with the response
+      const updatedMessages = messages.map(msg => 
         msg.id === loadingMessage.id 
           ? { 
               ...msg, 
@@ -120,9 +164,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               htmlSuggestion: response.generatedHtml || undefined
             } 
           : msg
-      ));
+      );
+      
+      // Update messages through the parent component
+      onMessagesUpdate(updatedMessages);
+      
+      // Refresh the contexts list after sending a message
+      setSavedContexts(getContextList());
+      setCanRevert(true);
     } catch (error) {
-      setMessages(prev => prev.map(msg => 
+      // Update the loading message with an error
+      const errorMessages = messages.map(msg => 
         msg.id === loadingMessage.id 
           ? { 
               ...msg, 
@@ -130,7 +182,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               isLoading: false 
             } 
           : msg
-      ));
+      );
+      onMessagesUpdate(errorMessages);
     } finally {
       setIsLoading(false);
     }
@@ -151,25 +204,53 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     
     return formattedContent;
   };
+  
+  const handleClearMessages = () => {
+    // Keep only the system welcome message
+    const welcomeMessage = messages.find(msg => msg.id === 'system-welcome');
+    if (welcomeMessage) {
+      onMessagesUpdate([welcomeMessage]);
+    } else {
+      // Create a new welcome message if it doesn't exist
+      const newWelcomeMessage: Message = {
+        id: 'system-welcome',
+        content: 'Welcome to the AI code assistant. Ask about the current code, request modifications, or ask for help.',
+        type: 'system',
+        timestamp: new Date()
+      };
+      onMessagesUpdate([newWelcomeMessage]);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col bg-gray-800 border-l border-gray-700">
       {/* Chat Header */}
       <div className="p-3 border-b border-gray-700 flex justify-between items-center">
         <span className="text-sm font-semibold text-gray-200">AI Assistant</span>
-        <button 
-          onClick={() => setMessages([messages[0]])} 
-          className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
-          title="Clear conversation"
-        >
-          <Icons.Clear />
-        </button>
+        <div className="flex items-center gap-2">
+          {canRevert && (
+            <button 
+              onClick={handleRevert} 
+              className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+              title="Revert to previous state"
+            >
+              <Icons.Revert />
+            </button>
+          )}
+          <button 
+            onClick={handleClearMessages} 
+            className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+            title="Clear conversation"
+          >
+            <Icons.Clear />
+          </button>
+        </div>
       </div>
       
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map(message => (
-          <div key={message.id} className="flex items-start gap-3">
+          <div key={message.id} className="flex items-start gap-3 message" data-id={message.id} data-type={message.type}>
             {/* Avatar */}
             <div className="mt-1">
               {message.type === 'user' ? <Icons.User /> : 

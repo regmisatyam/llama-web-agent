@@ -73,6 +73,18 @@ export async function POST(request: NextRequest) {
         contextMessage += `\n`;
       }
       
+      // Add saved contexts information if available
+      if (context.savedContexts && context.savedContexts.length > 0) {
+        contextMessage += `SAVED CONTEXTS:\n`;
+        context.savedContexts.forEach((ctx: any) => {
+          contextMessage += `- ${ctx.name} (${new Date(ctx.timestamp).toLocaleString()}, ${ctx.fileCount} files)\n`;
+        });
+        contextMessage += `\n`;
+        contextMessage += `The user can save the current state of their project as a "context" and restore it later. 
+If the user asks about saving the current context, tell them they can use the "Save Context" button at the top of the IDE.
+If they ask about restoring a context, tell them they can use the "Load Context" button.\n\n`;
+      }
+      
       contextMessage += `When the user asks for modifications:
 1. Provide the COMPLETE modified code, not just snippets
 2. Include ALL the original code with your changes
@@ -86,24 +98,52 @@ You can help the user understand, modify, or improve any of these files, or assi
         content: contextMessage
       });
     } else if (context?.generatedHtml) {
-      formattedMessages.unshift({
-        role: 'system',
-        content: `You are a helpful AI assistant specialized in web development. The user has previously generated HTML code from an image. Here is the current HTML code for reference:
+      let contextMessage = `You are a helpful AI assistant specialized in web development. The user has previously generated HTML code from an image. Here is the current HTML code for reference:
 
-${context.generatedHtml}
+${context.generatedHtml}`;
 
-When the user asks for modifications:
+      // Add saved contexts information if available
+      if (context.savedContexts && context.savedContexts.length > 0) {
+        contextMessage += `\n\nSAVED CONTEXTS:\n`;
+        context.savedContexts.forEach((ctx: any) => {
+          contextMessage += `- ${ctx.name} (${new Date(ctx.timestamp).toLocaleString()}, ${ctx.fileCount} files)\n`;
+        });
+        contextMessage += `\n`;
+        contextMessage += `The user can save the current state of their project as a "context" and restore it later. 
+If the user asks about saving the current context, tell them they can use the "Save Context" button at the top of the IDE.
+If they ask about restoring a context, tell them they can use the "Load Context" button.\n\n`;
+      }
+
+      contextMessage += `\nWhen the user asks for modifications:
 1. Provide the COMPLETE modified HTML code, not just snippets
 2. Include ALL the original code with your changes
 3. Wrap the HTML in a code block with \`\`\`html and \`\`\`
 4. Explain what changes you made
 
-You can help the user understand, modify, or improve this code, or assist with any other questions.`
-      });
-    } else {
+You can help the user understand, modify, or improve this code, or assist with any other questions.`;
+
       formattedMessages.unshift({
         role: 'system',
-        content: 'You are a helpful AI assistant specialized in web development and HTML/CSS. You can help with code generation, modifications, explanations, and general web development questions. When providing HTML code, always wrap it in ```html code blocks.'
+        content: contextMessage
+      });
+    } else {
+      let contextMessage = 'You are a helpful AI assistant specialized in web development and HTML/CSS. You can help with code generation, modifications, explanations, and general web development questions. When providing HTML code, always wrap it in ```html code blocks.';
+      
+      // Add saved contexts information if available
+      if (context?.savedContexts && context.savedContexts.length > 0) {
+        contextMessage += `\n\nSAVED CONTEXTS:\n`;
+        context.savedContexts.forEach((ctx: any) => {
+          contextMessage += `- ${ctx.name} (${new Date(ctx.timestamp).toLocaleString()}, ${ctx.fileCount} files)\n`;
+        });
+        contextMessage += `\n`;
+        contextMessage += `The user can save the current state of their project as a "context" and restore it later. 
+If the user asks about saving the current context, tell them they can use the "Save Context" button at the top of the IDE.
+If they ask about restoring a context, tell them they can use the "Load Context" button.\n`;
+      }
+      
+      formattedMessages.unshift({
+        role: 'system',
+        content: contextMessage
       });
     }
 
@@ -161,7 +201,7 @@ You can help the user understand, modify, or improve this code, or assist with a
         message: "I encountered an error but I'm here to help! What would you like to know about web development or the generated HTML?"
       });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Server error:', error);
     return NextResponse.json({
       success: false,
