@@ -1,6 +1,6 @@
 # 🚀 AI Website Generator
 
-A powerful web application that transforms website screenshots into responsive HTML code using Llama AI vision recognition.
+A powerful web application that transforms website screenshots into responsive HTML code(Template) using Llama AI vision recognition and modify/edit update code using voice commands.
 
 ## ✨ Features
 
