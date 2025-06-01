@@ -87,27 +87,8 @@ export default function LandingPage() {
               <Icons.Code />
               Start Coding Now
             </button>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-gray-800 hover:bg-gray-900 text-white px-8 py-4 rounded-lg text-lg font-medium flex items-center justify-center gap-2"
-            >
-              <Icons.Image />
-              Upload Images
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                const files = e.target.files;
-                if (files) {
-                  const fileArray = Array.from(files);
-                  handleFileUpload(fileArray);
-                }
-              }}
-            />
+            
+           
           </div>
         </div>
       </section>
