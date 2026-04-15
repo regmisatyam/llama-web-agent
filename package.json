@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
+    "@monaco-editor/react": "^4.7.0",
     "@types/file-saver": "^2.0.7",
     "@types/react-speech-recognition": "^3.9.6",
     "file-saver": "^2.0.5",

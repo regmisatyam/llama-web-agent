@@ -85,7 +85,21 @@ interface ChatPanelProps {
   }) => void;
   messages: Message[];
   onMessagesUpdate: (messages: Message[]) => void;
+  globalVoiceActive?: boolean;
+  onGlobalVoiceToggle?: () => void;
+  onIDEVoiceCommand?: (command: string) => void;
+  explainText?: string;
+  onExplainTextConsumed?: () => void;
 }
+
+const PROMPT_CHIPS = [
+  { label: '🌙 Dark mode', prompt: 'Add a beautiful dark mode toggle to this page with smooth transitions' },
+  { label: '📱 Responsive', prompt: 'Make this fully responsive for mobile, tablet, and desktop with a hamburger menu on mobile' },
+  { label: '✨ Animations', prompt: 'Add smooth scroll animations and hover effects to make this page feel more alive' },
+  { label: '♿ Accessibility', prompt: 'Fix all accessibility issues: add proper ARIA labels, improve color contrast, and ensure keyboard navigation works' },
+  { label: '🎨 Glassmorphism', prompt: 'Redesign the UI with modern glassmorphism styling: frosted glass effects, subtle gradients, and depth' },
+  { label: '⚡ Performance', prompt: 'Optimize this page for performance: lazy load images, minimize repaints, and improve render speed' },
+];
 
 const ChatPanel: React.FC<ChatPanelProps> = ({ 
   currentFileContent, 
@@ -95,7 +109,12 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   onSendMessage,
   onRevertState,
   messages,
-  onMessagesUpdate
+  onMessagesUpdate,
+  globalVoiceActive,
+  onGlobalVoiceToggle,
+  onIDEVoiceCommand,
+  explainText,
+  onExplainTextConsumed,
 }) => {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -112,10 +131,51 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const animationRef = useRef<NodeJS.Timeout | null>(null);
 
   // State for showing confirmation message
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmationMessage, setConfirmationMessage] = useState('');
+
+  // Prompt chips visibility
+  const [showChips, setShowChips] = useState(true);
+
+  // When explainText is received from the editor, prefill input
+  useEffect(() => {
+    if (explainText) {
+      const prompt = `Explain this code and what it does:\n\`\`\`\n${explainText}\n\`\`\``;
+      setInputValue(prompt);
+      setShowChips(false);
+      onExplainTextConsumed?.();
+      // Focus textarea
+      setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }, [explainText, onExplainTextConsumed]);
+
+  // Typing animation: progressively reveal AI response text
+  const animateTyping = useCallback((targetId: string, fullText: string, baseMessages: Message[]) => {
+    if (animationRef.current) clearTimeout(animationRef.current);
+    const totalChars = fullText.length;
+    // Aim for ~1.2s total animation; at least 1 char per tick
+    const charsPerTick = Math.max(1, Math.floor(totalChars / 60));
+    let charIdx = 0;
+
+    const tick = () => {
+      charIdx = Math.min(charIdx + charsPerTick, totalChars);
+      const partial = fullText.substring(0, charIdx);
+      const updated = baseMessages.map((m: Message) =>
+        m.id === targetId ? { ...m, content: partial, isLoading: false } : m
+      );
+      onMessagesUpdate(updated);
+      if (charIdx < totalChars) {
+        animationRef.current = setTimeout(tick, 20);
+      }
+    };
+
+    tick();
+  }, [onMessagesUpdate]);
+
+  useEffect(() => () => { if (animationRef.current) clearTimeout(animationRef.current); }, []);
 
   // Auto scroll to bottom on new messages
   useEffect(() => {
@@ -222,6 +282,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     // Update messages through the parent component
     onMessagesUpdate([...messages, userMessage, loadingMessage]);
     setInputValue('');
+    setShowChips(false);
     setIsLoading(true);
     
     try {
@@ -303,27 +364,22 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       const loadingMessageIndex = newMessages.findIndex(msg => msg.id === loadingMessage.id);
       
       if (loadingMessageIndex !== -1) {
-        // Check for empty or undefined response content
         if (!result.message || result.message.trim() === '') {
-          console.warn('Received empty message from API');
           result.message = "I'm sorry, but I didn't receive a valid response. Please try again.";
         }
-        
-        // Make sure the message content is visible in the chat
+
+        // Set final state (with htmlSuggestion) into the array but start with empty content
         newMessages[loadingMessageIndex] = {
           ...newMessages[loadingMessageIndex],
-          content: result.message,
+          content: '',
           isLoading: false,
           htmlSuggestion: result.generatedHtml || undefined
         };
-        
-        // Log for debugging
-        console.log(`Updated message at index ${loadingMessageIndex} with content length: ${result.message.length}`);
-        
-        // Force message rendering by providing a new reference
-        onMessagesUpdate([...newMessages]);
+
+        // Kick off typing animation — it will progressively fill in content
+        const baseSnapshot = [...newMessages];
+        animateTyping(loadingMessage.id, result.message, baseSnapshot);
       } else {
-        console.warn('Could not find loading message to update');
         // Add as a new message if we couldn't find the loading message
         const newAssistantMessage: Message = {
           id: `assistant-${Date.now()}`,
@@ -367,6 +423,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       onMessagesUpdate(errorMessages);
     } finally {
       setIsLoading(false);
+      // Show chips again after response
+      setTimeout(() => setShowChips(true), 600);
     }
   };
 
@@ -571,22 +629,30 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   
   // Toggle voice agent visibility
   const toggleVoiceAgent = useCallback(() => {
+    if (onGlobalVoiceToggle) {
+      onGlobalVoiceToggle();
+    }
     setShowVoiceAgent(prev => {
-      // If turning on voice agent, also start listening
       if (!prev) {
         setTimeout(() => setIsVoiceAgentListening(true), 100);
       } else {
-        // If turning off, stop listening
         setIsVoiceAgentListening(false);
       }
       return !prev;
     });
-  }, []);
+  }, [onGlobalVoiceToggle]);
+
+  // Sync local voice visibility with globalVoiceActive
+  useEffect(() => {
+    if (globalVoiceActive !== undefined) {
+      setShowVoiceAgent(globalVoiceActive);
+      setIsVoiceAgentListening(globalVoiceActive);
+    }
+  }, [globalVoiceActive]);
   
   // Add keyboard shortcuts for voice agent
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Alt+V to toggle voice agent
       if (e.altKey && e.key === 'v') {
         toggleVoiceAgent();
       }
@@ -856,46 +922,71 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
       
       {/* Input Area */}
-      <div className="p-4 border-t border-gray-700 bg-gray-850">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="p-3 border-t border-gray-800/80 bg-[#0f1117]">
+        {/* Prompt chips */}
+        {showChips && (
+          <div className="mb-2">
+            <div className="flex items-center gap-1 mb-1.5">
+              <span className="text-[9px] text-gray-600 uppercase tracking-wider font-semibold">Quick prompts</span>
+              <button onClick={() => setShowChips(false)} className="ml-auto text-gray-700 hover:text-gray-500 transition-colors">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {PROMPT_CHIPS.map(chip => (
+                <button
+                  key={chip.label}
+                  onClick={() => { setInputValue(chip.prompt); setShowChips(false); textareaRef.current?.focus(); }}
+                  className="text-[10px] px-2 py-1 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 rounded-full border border-gray-800 hover:border-gray-700 transition-all"
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Mode bar */}
+        <div className="flex items-center gap-1.5 mb-2">
           <button
             onClick={toggleModifyMode}
-            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
+            className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors ${
               modifyMode 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                ? 'bg-blue-600/80 text-white' 
+                : 'bg-white/5 text-gray-500 hover:text-gray-300 hover:bg-white/10'
             }`}
-            title={modifyMode ? "Switch to chat mode" : "Switch to code modification mode"}
+            title={modifyMode ? "Chat mode" : "Code edit mode"}
           >
             {modifyMode ? <Icons.Chat /> : <Icons.ModifyCode />}
-            {modifyMode ? 'Chat Mode' : 'Modify Mode'}
+            {modifyMode ? 'Chat' : 'Modify'}
           </button>
           
           <button
             onClick={toggleVoiceAgent}
-            className={`flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
+            className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md transition-colors ${
               showVoiceAgent
-                ? 'bg-purple-600 text-white'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                : 'bg-white/5 text-gray-500 hover:text-gray-300 hover:bg-white/10'
             }`}
-            title={showVoiceAgent ? "Hide voice agent" : "Show voice agent"}
+            title="Toggle Voice (Alt+V)"
           >
             <Icons.Voice />
-            Voice Agent
+            {showVoiceAgent ? 'Voice On' : 'Voice'}
           </button>
-          
+
           {modifyMode && (
-            <div className="text-xs text-gray-400">
-              Enter instructions to modify the current file
-            </div>
+            <span className="text-[10px] text-blue-400/70 ml-1">Describe the change you want</span>
           )}
         </div>
         
         {/* Voice Agent */}
         {showVoiceAgent && (
-          <div className="mb-3 bg-gray-900 p-3 rounded-md border border-gray-700">
+          <div className="mb-2 bg-gray-900/80 p-3 rounded-xl border border-gray-700/80">
             <VoiceAgent 
               onVoiceCommand={handleVoiceCommand}
+              onIDECommand={onIDEVoiceCommand}
               isListening={isVoiceAgentListening}
               setIsListening={setIsVoiceAgentListening}
             />
@@ -909,8 +1000,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={promptPlaceholder}
-            className={`w-full bg-gray-700 text-gray-100 rounded-lg px-4 py-3 pr-10 resize-none max-h-32 focus:outline-none focus:ring-2 ${
-              modifyMode ? 'focus:ring-blue-500 border border-blue-500' : 'focus:ring-gray-500'
+            className={`w-full bg-white/5 text-gray-100 rounded-xl px-3.5 py-2.5 pr-10 resize-none max-h-32 text-sm focus:outline-none focus:ring-1 placeholder-gray-600 ${
+              modifyMode ? 'focus:ring-blue-500/50 border border-blue-500/30' : 'focus:ring-gray-600 border border-gray-800'
             }`}
             rows={1}
             disabled={isLoading}
@@ -918,7 +1009,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
           <button
             onClick={handleSend}
             disabled={!inputValue.trim() || isLoading}
-            className="absolute right-3 top-3 text-gray-400 hover:text-white p-1 rounded hover:bg-gray-600 disabled:opacity-50 disabled:hover:bg-transparent"
+            className="absolute right-2.5 top-2.5 text-gray-500 hover:text-white p-1 rounded-lg hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
           >
             <Icons.Send />
           </button>

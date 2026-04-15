@@ -1,360 +1,347 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 
 interface VoiceAgentProps {
   onVoiceCommand: (command: string) => void;
+  onIDECommand?: (command: string) => void;
   isListening: boolean;
   setIsListening: (isListening: boolean) => void;
 }
 
-const VoiceAgent: React.FC<VoiceAgentProps> = ({ 
-  onVoiceCommand, 
-  isListening, 
-  setIsListening 
-}) => {
-  const [message, setMessage] = useState<string>('');
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [editableCommand, setEditableCommand] = useState<string>('');
-  const [showEditMode, setShowEditMode] = useState<boolean>(false);
-  const [showHelp, setShowHelp] = useState<boolean>(false);
+const WaveBar = ({ delay, isActive }: { delay: number; isActive: boolean }) => (
+  <div
+    className={`w-0.5 rounded-full transition-all duration-150 ${isActive ? 'bg-red-400' : 'bg-gray-600'}`}
+    style={{
+      height: isActive ? `${Math.random() * 20 + 6}px` : '4px',
+      animationDelay: `${delay}ms`,
+      animation: isActive ? `wave 0.8s ease-in-out ${delay}ms infinite alternate` : 'none',
+    }}
+  />
+);
 
-  // Configure speech recognition
+const IDE_COMMANDS = [
+  { trigger: 'preview', label: 'preview', desc: 'Open preview in new tab' },
+  { trigger: 'new file', label: 'new file', desc: 'Open create file dialog' },
+  { trigger: 'create file', label: 'create file', desc: 'Open create file dialog' },
+  { trigger: 'rename file to', label: 'rename file to [name]', desc: 'Rename current file' },
+];
+
+const CODE_COMMANDS = [
+  { trigger: 'modify', label: 'modify [text]', desc: 'Modify code element' },
+  { trigger: 'add', label: 'add [text]', desc: 'Add new element/code' },
+  { trigger: 'change', label: 'change [text]', desc: 'Change existing code' },
+  { trigger: 'delete', label: 'delete [text]', desc: 'Remove element' },
+  { trigger: 'create', label: 'create [text]', desc: 'Create new component' },
+  { trigger: 'make', label: 'make [text]', desc: 'Build something new' },
+  { trigger: 'build', label: 'build [text]', desc: 'Build something new' },
+  { trigger: 'fix', label: 'fix [text]', desc: 'Fix or debug code' },
+  { trigger: 'style', label: 'style [text]', desc: 'Style with CSS/Tailwind' },
+];
+
+const VoiceAgent: React.FC<VoiceAgentProps> = ({
+  onVoiceCommand,
+  onIDECommand,
+  isListening,
+  setIsListening
+}) => {
+  const [editableCommand, setEditableCommand] = useState('');
+  const [showEditMode, setShowEditMode] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [waveBars, setWaveBars] = useState<number[]>([]);
+  const waveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const commands = [
+    ...CODE_COMMANDS.map(c => ({
+      command: `${c.trigger} *`,
+      callback: (rest: string) => {
+        const full = `${c.trigger} ${rest}`;
+        setStatusMsg(`Recognized: "${full}"`);
+        prepareCommandForEditing(full);
+      }
+    })),
+    ...IDE_COMMANDS.map(c => ({
+      command: c.trigger === 'rename file to' ? `rename file to *` : c.trigger,
+      callback: (rest?: string) => {
+        const full = c.trigger + (rest ? ` ${rest}` : '');
+        setStatusMsg(`IDE command: "${full}"`);
+        if (onIDECommand) onIDECommand(full);
+        else prepareCommandForEditing(full);
+      }
+    })),
     {
-      command: 'modify *',
-      callback: (modifyCommand: string) => {
-        setMessage(`Command recognized: "modify ${modifyCommand}"`);
-        prepareCommandForEditing(`modify ${modifyCommand}`);
+      command: 'send',
+      callback: () => {
+        if (editableCommand) processVoiceCommand(editableCommand);
       }
     },
     {
-      command: 'add *',
-      callback: (addCommand: string) => {
-        setMessage(`Command recognized: "add ${addCommand}"`);
-        prepareCommandForEditing(`add ${addCommand}`);
-      }
-    },
-    {
-      command: 'change *',
-      callback: (changeCommand: string) => {
-        setMessage(`Command recognized: "change ${changeCommand}"`);
-        prepareCommandForEditing(`change ${changeCommand}`);
-      }
-    },
-    {
-      command: 'delete *',
-      callback: (deleteCommand: string) => {
-        setMessage(`Command recognized: "delete ${deleteCommand}"`);
-        prepareCommandForEditing(`delete ${deleteCommand}`);
-      }
+      command: 'cancel',
+      callback: () => handleCancelEdit()
     },
     {
       command: 'stop listening',
       callback: () => {
-        setMessage('Voice recognition paused');
+        setStatusMsg('Voice paused');
         stopListening();
       }
     },
     {
-      command: 'send',
+      command: 'clear',
       callback: () => {
-        if (editableCommand) {
-          setMessage('Sending command...');
-          processVoiceCommand(editableCommand);
-        }
-      }
-    },
-    {
-      command: 'edit',
-      callback: () => {
-        if (transcript) {
-          prepareCommandForEditing(transcript);
-        }
+        resetTranscript();
+        setStatusMsg('Transcript cleared');
       }
     }
   ];
 
-  const {
-    transcript,
-    listening,
-    resetTranscript,
-    browserSupportsSpeechRecognition
-  } = useSpeechRecognition({ commands });
+  const { transcript, listening, resetTranscript, browserSupportsSpeechRecognition } =
+    useSpeechRecognition({ commands });
 
-  // Prepare command for editing
+  // Animate waveform bars
+  useEffect(() => {
+    if (listening) {
+      setWaveBars(Array.from({ length: 24 }, () => Math.random() * 100));
+      waveTimerRef.current = setInterval(() => {
+        setWaveBars(Array.from({ length: 24 }, () => Math.random() * 100));
+      }, 200);
+    } else {
+      if (waveTimerRef.current) clearInterval(waveTimerRef.current);
+      setWaveBars([]);
+    }
+    return () => { if (waveTimerRef.current) clearInterval(waveTimerRef.current); };
+  }, [listening]);
+
   const prepareCommandForEditing = useCallback((command: string) => {
     setEditableCommand(command);
     setShowEditMode(true);
-    // Pause listening while editing
-    if (listening) {
-      SpeechRecognition.stopListening();
-    }
+    if (listening) SpeechRecognition.stopListening();
   }, [listening]);
 
-  // Process the voice command
   const processVoiceCommand = useCallback((command: string) => {
     setIsProcessing(true);
-    
-    // Send the command to the parent component
+    setStatusMsg('Processing...');
     onVoiceCommand(command);
-    
-    // Reset for next command
     setTimeout(() => {
       resetTranscript();
       setIsProcessing(false);
       setShowEditMode(false);
       setEditableCommand('');
-    }, 1000);
+      setStatusMsg('');
+    }, 800);
   }, [onVoiceCommand, resetTranscript]);
 
-  // Start listening
   const startListening = useCallback(() => {
     setIsListening(true);
-    SpeechRecognition.startListening({ continuous: true });
+    SpeechRecognition.startListening({ continuous: true, language: 'en-US' });
   }, [setIsListening]);
 
-  // Stop listening
   const stopListening = useCallback(() => {
     setIsListening(false);
     SpeechRecognition.stopListening();
   }, [setIsListening]);
 
-  // Toggle listening state
   const toggleListening = useCallback(() => {
-    if (listening) {
-      stopListening();
-    } else {
-      startListening();
-    }
+    listening ? stopListening() : startListening();
   }, [listening, startListening, stopListening]);
 
-  // Update UI when listening state changes
   useEffect(() => {
-    if (isListening && !listening && !showEditMode) {
-      startListening();
-    } else if (!isListening && listening) {
-      stopListening();
-    }
+    if (isListening && !listening && !showEditMode) startListening();
+    else if (!isListening && listening) stopListening();
   }, [isListening, listening, startListening, stopListening, showEditMode]);
 
-  // Handle sending the edited command
   const handleSendEditedCommand = () => {
-    if (editableCommand.trim()) {
-      processVoiceCommand(editableCommand);
-    }
+    if (editableCommand.trim()) processVoiceCommand(editableCommand);
   };
 
-  // Handle canceling the edit
   const handleCancelEdit = () => {
     setShowEditMode(false);
     setEditableCommand('');
-    // Resume listening if it was active
-    if (isListening) {
-      startListening();
-    }
+    if (isListening) startListening();
   };
 
-  // Add keyboard shortcut for voice agent
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Alt+V to toggle voice recognition
-      if (e.altKey && e.key === 'v') {
-        toggleListening();
-      }
-      
-      // Alt+E to edit the current transcript
-      if (e.altKey && e.key === 'e' && transcript) {
-        prepareCommandForEditing(transcript);
-      }
-      
-      // Alt+S to send the edited command
-      if (e.altKey && e.key === 's' && showEditMode && editableCommand) {
-        handleSendEditedCommand();
-      }
-      
-      // Escape to cancel edit mode
-      if (e.key === 'Escape' && showEditMode) {
-        handleCancelEdit();
-      }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === 'v') toggleListening();
+      if (e.altKey && e.key === 'e' && transcript) prepareCommandForEditing(transcript);
+      if (e.altKey && e.key === 's' && showEditMode && editableCommand) handleSendEditedCommand();
+      if (e.key === 'Escape' && showEditMode) handleCancelEdit();
     };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggleListening, transcript, prepareCommandForEditing, showEditMode, editableCommand, handleSendEditedCommand, handleCancelEdit]);
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [toggleListening, transcript, prepareCommandForEditing, showEditMode, editableCommand]);
 
-  // Toggle help section
-  const toggleHelp = () => {
-    setShowHelp(!showHelp);
-  };
-
-  // Check browser support
   if (!browserSupportsSpeechRecognition) {
     return (
-      <div className="p-3 bg-red-900 bg-opacity-30 text-red-200 text-sm rounded-md">
-        Your browser doesn't support speech recognition.
+      <div className="p-3 bg-red-900/30 border border-red-700/50 text-red-300 text-xs rounded-xl">
+        Voice recognition is not supported in this browser. Try Chrome or Edge.
       </div>
     );
   }
 
   return (
     <div className="voice-agent">
-      {/* Edit Mode */}
+      <style jsx global>{`
+        @keyframes wave {
+          0% { height: 4px; }
+          100% { height: 24px; }
+        }
+      `}</style>
+
       {showEditMode ? (
-        <div className="bg-gray-800 rounded-md p-3 border border-gray-700">
+        <div className="bg-gray-900/80 rounded-xl p-3 border border-gray-700">
           <div className="flex justify-between items-center mb-2">
-            <div className="text-sm text-gray-300">Edit your command:</div>
-            <div className="text-xs text-gray-500">
-              <span className="bg-gray-700 px-1 rounded">Alt+S</span> to send, 
-              <span className="bg-gray-700 px-1 rounded ml-1">Esc</span> to cancel
+            <span className="text-xs text-gray-300 font-medium">Edit command before sending</span>
+            <div className="flex gap-1 text-[10px] text-gray-600">
+              <span className="bg-gray-800 px-1.5 py-0.5 rounded">Alt+S</span> send,
+              <span className="bg-gray-800 px-1.5 py-0.5 rounded ml-1">Esc</span> cancel
             </div>
           </div>
           <textarea
             value={editableCommand}
-            onChange={(e) => setEditableCommand(e.target.value)}
-            className="w-full bg-gray-900 text-white rounded p-2 text-sm mb-3 min-h-[60px]"
+            onChange={e => setEditableCommand(e.target.value)}
+            className="w-full bg-gray-950 text-white text-xs rounded-lg p-2.5 mb-2 resize-none outline-none border border-gray-700 focus:border-blue-500"
+            rows={2}
             placeholder="Edit your command here..."
             autoFocus
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendEditedCommand(); }
+              if (e.key === 'Escape') handleCancelEdit();
+            }}
           />
           <div className="flex justify-end gap-2">
-            <button
-              onClick={handleCancelEdit}
-              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-xs"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSendEditedCommand}
-              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs"
-            >
-              Send Command
-            </button>
+            <button onClick={handleCancelEdit} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-xs transition-colors">Cancel</button>
+            <button onClick={handleSendEditedCommand} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs transition-colors">Send</button>
           </div>
         </div>
       ) : (
-        <>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={toggleListening}
-                className={`p-2 rounded-full ${
-                  listening 
-                    ? 'bg-red-600 hover:bg-red-700' 
-                    : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-                title={listening ? 'Stop listening (Alt+V)' : 'Start listening (Alt+V)'}
-              >
-                <svg 
-                  className="w-5 h-5 text-white" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  {listening ? (
-                    <path 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round" 
-                      strokeWidth={2} 
-                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" 
+        <div className="space-y-2">
+          {/* Main control row */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleListening}
+              className={`relative w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+                listening
+                  ? 'bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/30'
+                  : 'bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-500/20'
+              }`}
+              title={listening ? 'Stop (Alt+V)' : 'Start (Alt+V)'}
+            >
+              {listening && (
+                <span className="absolute inset-0 rounded-full bg-red-500 animate-ping opacity-30" />
+              )}
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {listening ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9 10h6v4H9z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                )}
+              </svg>
+            </button>
+
+            <div className="flex-1">
+              {/* Waveform */}
+              {listening ? (
+                <div className="flex items-center gap-0.5 h-7">
+                  {waveBars.map((h, i) => (
+                    <div
+                      key={i}
+                      className="w-0.5 rounded-full bg-red-400 transition-all duration-200"
+                      style={{ height: `${Math.max(3, h * 0.25)}px` }}
                     />
-                  ) : (
-                    <path 
-                      strokeLinecap="round" 
-                      strokeLinejoin="round" 
-                      strokeWidth={2} 
-                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" 
-                    />
-                  )}
-                </svg>
-              </button>
-              <div>
-                <span className={`text-sm block ${listening ? 'text-green-400' : 'text-gray-400'}`}>
-                  {listening ? 'Listening...' : 'Voice Agent (Click to activate)'}
-                </span>
-                <span className="text-xs text-gray-500">Press <span className="bg-gray-700 px-1 rounded">Alt+V</span> to toggle</span>
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  <span className="text-xs text-gray-500 block">
+                    {isProcessing ? 'Processing...' : 'Click to activate voice'}
+                  </span>
+                  <span className="text-[10px] text-gray-700">Alt+V to toggle</span>
+                </div>
+              )}
             </div>
-            
-            <div className="flex justify-end">
-              <button
-                onClick={toggleHelp}
-                className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {showHelp ? 'Hide Help' : 'Show Commands'}
-              </button>
-            </div>
-            
-            {listening && (
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                </span>
-                <span className="text-xs text-gray-400">
-                  Try saying: "modify button color to blue"
-                </span>
-              </div>
-            )}
+
+            <button
+              onClick={() => setShowHelp(h => !h)}
+              className="text-[10px] text-gray-600 hover:text-gray-400 transition-colors"
+            >
+              {showHelp ? 'Hide' : 'Commands'}
+            </button>
           </div>
-          
-          {listening && transcript && (
-            <div className="bg-gray-800 rounded-md p-2 text-sm">
-              <div className="text-gray-400 mb-1 text-xs">Transcript:</div>
-              <div className="text-gray-200 italic">
-                {transcript || 'Speak now...'}
+
+          {/* Live transcript */}
+          {listening && (
+            <div className="bg-gray-950/80 rounded-lg px-3 py-2 border border-gray-800">
+              <div className="text-[10px] text-gray-600 mb-1">Transcript</div>
+              <div className="text-xs text-gray-300 italic min-h-[1.2em]">
+                {transcript || <span className="text-gray-600">Speak now...</span>}
               </div>
-              {message && (
-                <div className={`mt-2 text-xs ${isProcessing ? 'text-yellow-400' : 'text-green-400'}`}>
-                  {message}
+              {statusMsg && (
+                <div className={`mt-1.5 text-[10px] ${isProcessing ? 'text-yellow-400' : 'text-green-400'}`}>
+                  {statusMsg}
                 </div>
               )}
               {transcript && (
-                <div className="mt-2 flex justify-end">
+                <div className="mt-2 flex gap-2">
                   <button
                     onClick={() => prepareCommandForEditing(transcript)}
-                    className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded text-xs flex items-center gap-1"
-                    title="Edit Command (Alt+E)"
+                    className="text-[10px] px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors"
                   >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                    Edit Command <span className="ml-1 text-gray-400">(Alt+E)</span>
+                    Edit (Alt+E)
+                  </button>
+                  <button
+                    onClick={() => processVoiceCommand(transcript)}
+                    className="text-[10px] px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  >
+                    Send Now
                   </button>
                 </div>
               )}
             </div>
           )}
-          
-          {/* Help section */}
+
+          {/* Help panel */}
           {showHelp && (
-            <div className="mt-2 bg-gray-900 rounded-md p-2 text-xs border border-gray-700">
-              <h4 className="font-medium text-gray-300 mb-1">Available Voice Commands:</h4>
-              <ul className="space-y-1 text-gray-400">
-                <li><span className="text-blue-400">modify [text]</span> - Modify code with your instructions</li>
-                <li><span className="text-blue-400">add [text]</span> - Add new code or elements</li>
-                <li><span className="text-blue-400">change [text]</span> - Change existing code</li>
-                <li><span className="text-blue-400">delete [text]</span> - Delete code elements</li>
-                <li><span className="text-blue-400">edit</span> - Edit the current transcript</li>
-                <li><span className="text-blue-400">send</span> - Send the edited command</li>
-                <li><span className="text-blue-400">stop listening</span> - Turn off voice recognition</li>
-              </ul>
-              <h4 className="font-medium text-gray-300 mt-2 mb-1">Keyboard Shortcuts:</h4>
-              <ul className="space-y-1 text-gray-400">
-                <li><span className="bg-gray-700 px-1 rounded">Alt+V</span> - Toggle voice recognition</li>
-                <li><span className="bg-gray-700 px-1 rounded">Alt+E</span> - Edit current transcript</li>
-                <li><span className="bg-gray-700 px-1 rounded">Alt+S</span> - Send edited command</li>
-                <li><span className="bg-gray-700 px-1 rounded">Esc</span> - Cancel editing</li>
-              </ul>
+            <div className="bg-gray-950/80 rounded-lg p-3 border border-gray-800 text-[10px] space-y-2">
+              <div>
+                <div className="text-gray-500 font-semibold uppercase tracking-wider mb-1">Code Commands</div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                  {CODE_COMMANDS.map(c => (
+                    <div key={c.trigger}>
+                      <span className="text-blue-400">{c.label}</span>
+                      <span className="text-gray-600 ml-1">— {c.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500 font-semibold uppercase tracking-wider mb-1">IDE Commands</div>
+                <div className="space-y-0.5">
+                  {IDE_COMMANDS.map(c => (
+                    <div key={c.trigger}>
+                      <span className="text-purple-400">{c.label}</span>
+                      <span className="text-gray-600 ml-1">— {c.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-500 font-semibold uppercase tracking-wider mb-1">Keyboard</div>
+                <div className="space-y-0.5 text-gray-600">
+                  <div><span className="bg-gray-800 px-1 rounded">Alt+V</span> toggle listening</div>
+                  <div><span className="bg-gray-800 px-1 rounded">Alt+E</span> edit transcript</div>
+                  <div><span className="bg-gray-800 px-1 rounded">Alt+S</span> send command</div>
+                </div>
+              </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
 };
 
-export default VoiceAgent; 
+export default VoiceAgent;
