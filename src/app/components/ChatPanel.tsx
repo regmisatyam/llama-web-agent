@@ -93,6 +93,7 @@ interface ChatPanelProps {
 }
 
 const PROMPT_CHIPS = [
+  { label: '💡 What next?', prompt: 'Looking at my current project files, what pages or sections should I add next to make this a more complete, professional website? Give me 3 specific, actionable suggestions.' },
   { label: '🌙 Dark mode', prompt: 'Add a beautiful dark mode toggle to this page with smooth transitions' },
   { label: '📱 Responsive', prompt: 'Make this fully responsive for mobile, tablet, and desktop with a hamburger menu on mobile' },
   { label: '✨ Animations', prompt: 'Add smooth scroll animations and hover effects to make this page feel more alive' },

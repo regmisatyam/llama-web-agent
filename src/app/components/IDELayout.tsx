@@ -16,10 +16,22 @@ import {
   clearAllContexts
 } from '../utils/contextManager';
 import { generateZipFromFiles } from '../utils/zipGenerator';
+import { TEMPLATES, Template } from '../utils/templates';
 import type { FileNode } from './FileExplorer';
 
 interface IDELayoutProps {
   initialHtml?: string;
+}
+
+interface FixIssue {
+  id: string;
+  category: string;
+  issue: string;
+  detail: string;
+  severity: 'high' | 'medium' | 'low';
+  file: string;
+  fixing?: boolean;
+  fixed?: boolean;
 }
 
 const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
@@ -53,6 +65,28 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
 
   // Global voice control state
   const [isVoiceActive, setIsVoiceActive] = useState(false);
+
+  // ── New feature modals ────────────────────────────────────────────────────
+  const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+  const [showFixModal, setShowFixModal] = useState(false);
+  const [showContentSwapModal, setShowContentSwapModal] = useState(false);
+  const [showImportUrlModal, setShowImportUrlModal] = useState(false);
+  const [showToolsDropdown, setShowToolsDropdown] = useState(false);
+  const toolsDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Fix My Site state
+  const [fixIssues, setFixIssues] = useState<FixIssue[]>([]);
+  const [isAuditing, setIsAuditing] = useState(false);
+  const [auditComplete, setAuditComplete] = useState(false);
+
+  // Content Swap state
+  const [contentSwapDesc, setContentSwapDesc] = useState('');
+  const [isSwappingContent, setIsSwappingContent] = useState(false);
+  const [swapProgress, setSwapProgress] = useState({ current: 0, total: 0 });
+
+  // Import URL state
+  const [importUrl, setImportUrl] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   // Split preview pane
   const [showPreviewPane, setShowPreviewPane] = useState(false);
@@ -503,6 +537,188 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
     }
   };
 
+  // Close tools dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(e.target as Node)) {
+        setShowToolsDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // ── Template Gallery ──────────────────────────────────────────────────────
+  const handleSelectTemplate = (template: Template) => {
+    const newFiles: FileNode[] = template.files.map(f => ({
+      id: generateUniqueId(),
+      name: f.name,
+      type: 'file' as const,
+      content: f.content,
+      language: f.language,
+      dateCreated: new Date(),
+    }));
+    setFiles(newFiles);
+    setActiveFileId(newFiles[0].id);
+    setActiveFile(newFiles[0]);
+    setShowTemplateGallery(false);
+    setChatMessages([{
+      id: 'system-welcome',
+      content: `Loaded "${template.name}" template (${newFiles.length} file${newFiles.length > 1 ? 's' : ''}). Customize it using the AI assistant or edit the code directly!`,
+      type: 'system',
+      timestamp: new Date(),
+    }]);
+  };
+
+  // ── Fix My Site ───────────────────────────────────────────────────────────
+  const handleRunAudit = async () => {
+    if (files.length === 0) return;
+    setIsAuditing(true);
+    setAuditComplete(false);
+    setFixIssues([]);
+    try {
+      const response = await fetch('/api/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: files.map(f => ({ name: f.name, language: f.language, content: f.content })),
+        }),
+      });
+      const result = await response.json();
+      if (result.success && result.issues) {
+        setFixIssues(result.issues);
+        setAuditComplete(true);
+      } else {
+        throw new Error(result.error || 'Audit failed');
+      }
+    } catch (err: any) {
+      alert(`Audit failed: ${err.message}`);
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleFixIssue = async (issue: FixIssue) => {
+    setFixIssues(prev => prev.map(i => i.id === issue.id ? { ...i, fixing: true } : i));
+    try {
+      const targetFile = files.find(f => f.name === issue.file) || activeFile;
+      if (!targetFile) return;
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: `Fix this issue: "${issue.issue}". ${issue.detail}. Return the complete updated ${targetFile.language?.toUpperCase()} file with the fix applied. Keep everything else unchanged.` }],
+          context: { currentFile: { name: targetFile.name, language: targetFile.language, content: targetFile.content } },
+        }),
+      });
+      const result = await res.json();
+      const htmlMatch = result.message?.match(/```(?:html|css|js|javascript)\n?([\s\S]*?)```/);
+      const fixed = result.generatedHtml || htmlMatch?.[1]?.trim();
+      if (fixed) {
+        const updated = files.map(f => f.id === targetFile.id ? { ...f, content: fixed } : f);
+        setFiles(updated);
+        if (activeFile?.id === targetFile.id) setActiveFile({ ...targetFile, content: fixed });
+      }
+      setFixIssues(prev => prev.map(i => i.id === issue.id ? { ...i, fixing: false, fixed: true } : i));
+    } catch {
+      setFixIssues(prev => prev.map(i => i.id === issue.id ? { ...i, fixing: false } : i));
+    }
+  };
+
+  // ── Content Swap ──────────────────────────────────────────────────────────
+  const handleContentSwap = async () => {
+    if (!contentSwapDesc.trim()) return;
+    const htmlFiles = files.filter(f => f.language === 'html');
+    if (htmlFiles.length === 0) { alert('No HTML files to update.'); return; }
+    setIsSwappingContent(true);
+    setSwapProgress({ current: 0, total: htmlFiles.length });
+    try {
+      const updatedFiles = [...files];
+      for (let i = 0; i < htmlFiles.length; i++) {
+        const file = htmlFiles[i];
+        setSwapProgress({ current: i + 1, total: htmlFiles.length });
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{
+              role: 'user',
+              content: `Replace ALL placeholder text (lorem ipsum, "Your Company", "Feature Title", generic descriptions, sample names, etc.) in this HTML file with real, contextually appropriate content for: "${contentSwapDesc}". Keep the HTML structure, Tailwind classes, and layout EXACTLY as is. Only replace the text content. Return the complete updated HTML file.`,
+            }],
+            context: { currentFile: { name: file.name, language: file.language, content: file.content } },
+          }),
+        });
+        const result = await res.json();
+        const match = result.message?.match(/```html\n?([\s\S]*?)```/);
+        const newContent = result.generatedHtml || match?.[1]?.trim();
+        if (newContent) {
+          const idx = updatedFiles.findIndex(f => f.id === file.id);
+          if (idx !== -1) updatedFiles[idx] = { ...updatedFiles[idx], content: newContent };
+        }
+      }
+      setFiles(updatedFiles);
+      const updatedActive = updatedFiles.find(f => f.id === activeFileId);
+      if (updatedActive) setActiveFile(updatedActive);
+      setShowContentSwapModal(false);
+      setContentSwapDesc('');
+      setChatMessages(prev => [...prev, {
+        id: `system-${Date.now()}`,
+        content: `Content personalized across ${htmlFiles.length} page${htmlFiles.length > 1 ? 's' : ''} based on your description.`,
+        type: 'system',
+        timestamp: new Date(),
+      }]);
+    } catch (err: any) {
+      alert(`Content swap failed: ${err.message}`);
+    } finally {
+      setIsSwappingContent(false);
+      setSwapProgress({ current: 0, total: 0 });
+    }
+  };
+
+  // ── Import from URL ───────────────────────────────────────────────────────
+  const handleImportUrl = async () => {
+    if (!importUrl.trim()) return;
+    setIsImporting(true);
+    try {
+      const res = await fetch('/api/import-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: importUrl.trim() }),
+      });
+      const result = await res.json();
+      if (result.success && result.html) {
+        const fileId = generateUniqueId();
+        let domainName = 'imported';
+        try { domainName = new URL(importUrl.trim()).hostname.replace('www.', '').split('.')[0]; } catch {}
+        const newFile: FileNode = {
+          id: fileId,
+          name: `${domainName}.html`,
+          type: 'file',
+          content: result.html,
+          language: 'html',
+          dateCreated: new Date(),
+        };
+        setFiles(prev => [...prev, newFile]);
+        setActiveFileId(fileId);
+        setActiveFile(newFile);
+        setShowImportUrlModal(false);
+        setImportUrl('');
+        setChatMessages(prev => [...prev, {
+          id: `system-${Date.now()}`,
+          content: `Imported and recreated layout from ${importUrl}. The content has been rebuilt with Tailwind CSS.`,
+          type: 'system',
+          timestamp: new Date(),
+        }]);
+      } else {
+        throw new Error(result.error || 'Import failed');
+      }
+    } catch (err: any) {
+      alert(`Import failed: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   // Voice command handler (called from ChatPanel, can also trigger IDE actions)
   const handleVoiceIDECommand = useCallback((command: string) => {
     const cmd = command.toLowerCase().trim();
@@ -594,6 +810,76 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
               <span className="bg-blue-600 text-white text-[9px] px-1 rounded-full">{savedContexts.length}</span>
             )}
           </button>
+
+          {/* Tools Dropdown */}
+          <div className="relative" ref={toolsDropdownRef}>
+            <button
+              onClick={() => setShowToolsDropdown(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md transition-all ${
+                showToolsDropdown
+                  ? 'bg-violet-500/20 text-violet-300 border border-violet-500/40'
+                  : 'bg-white/5 text-gray-300 hover:text-white hover:bg-white/10'
+              }`}
+              title="AI Tools"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Tools
+              <svg className={`w-2.5 h-2.5 transition-transform ${showToolsDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showToolsDropdown && (
+              <div className="absolute top-full left-0 mt-1 w-52 bg-[#1a1d26] border border-gray-700/80 rounded-xl shadow-2xl z-50 overflow-hidden">
+                <div className="px-3 py-2 border-b border-gray-800">
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500">AI Tools</span>
+                </div>
+                <div className="p-1">
+                  <button
+                    onClick={() => { setShowToolsDropdown(false); setShowTemplateGallery(true); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors text-left"
+                  >
+                    <span className="text-base">🎨</span>
+                    <div>
+                      <div className="font-medium">Template Gallery</div>
+                      <div className="text-gray-600 text-[10px]">Start from a pro template</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowToolsDropdown(false); setShowImportUrlModal(true); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors text-left"
+                  >
+                    <span className="text-base">🔗</span>
+                    <div>
+                      <div className="font-medium">Import from URL</div>
+                      <div className="text-gray-600 text-[10px]">Recreate any webpage</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowToolsDropdown(false); setAuditComplete(false); setFixIssues([]); setShowFixModal(true); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors text-left"
+                  >
+                    <span className="text-base">🔍</span>
+                    <div>
+                      <div className="font-medium">Fix My Site</div>
+                      <div className="text-gray-600 text-[10px]">AI accessibility & SEO scan</div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => { setShowToolsDropdown(false); setShowContentSwapModal(true); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors text-left"
+                  >
+                    <span className="text-base">✍️</span>
+                    <div>
+                      <div className="font-medium">Personalize Content</div>
+                      <div className="text-gray-600 text-[10px]">Replace lorem ipsum with real copy</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right: Split + Voice + Download */}
@@ -935,6 +1221,261 @@ const IDELayout: React.FC<IDELayoutProps> = ({ initialHtml = '' }) => {
 
             <div className="mt-5 flex justify-end">
               <button onClick={() => { setShowCreateDialog(false); setCreateFileName(''); }} className="px-4 py-2 text-sm bg-white/5 hover:bg-white/10 rounded-lg transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Template Gallery Modal ── */}
+      {showTemplateGallery && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1d26] border border-gray-700/80 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-white">Template Gallery</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Choose a starter — all files are pre-linked and ready to customize</p>
+              </div>
+              <button onClick={() => setShowTemplateGallery(false)} className="text-gray-500 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {TEMPLATES.map(template => (
+                  <div key={template.id} className="border border-gray-700/60 rounded-xl overflow-hidden hover:border-gray-600 transition-all group">
+                    <div className={`h-28 bg-gradient-to-br ${template.gradient} flex items-end p-4`}>
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/60">{template.category}</span>
+                        <h4 className="text-lg font-black text-white mt-0.5">{template.name}</h4>
+                      </div>
+                    </div>
+                    <div className="p-4 bg-[#111114]">
+                      <p className="text-xs text-gray-400 leading-relaxed mb-3">{template.description}</p>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          {template.files.map(f => (
+                            <span key={f.name} className={`text-[9px] px-1.5 py-0.5 rounded font-medium uppercase ${
+                              f.language === 'html' ? 'bg-orange-500/20 text-orange-300' :
+                              f.language === 'css' ? 'bg-blue-500/20 text-blue-300' :
+                              'bg-yellow-500/20 text-yellow-300'
+                            }`}>{f.name}</span>
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => handleSelectTemplate(template)}
+                          className="text-xs px-3 py-1.5 bg-white text-gray-900 rounded-lg font-semibold hover:bg-gray-100 transition-colors"
+                        >
+                          Use Template
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Fix My Site Modal ── */}
+      {showFixModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1d26] border border-gray-700/80 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl">
+            <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h3 className="text-base font-semibold text-white">Fix My Site</h3>
+                <p className="text-xs text-gray-500 mt-0.5">AI scans your files for accessibility, SEO, and performance issues</p>
+              </div>
+              <button onClick={() => setShowFixModal(false)} className="text-gray-500 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {!auditComplete && !isAuditing && (
+                <div className="text-center py-8">
+                  <div className="text-4xl mb-4">🔍</div>
+                  <h4 className="text-white font-semibold mb-2">Ready to scan {files.length} file{files.length !== 1 ? 's' : ''}</h4>
+                  <p className="text-gray-400 text-sm mb-8 max-w-sm mx-auto">The AI will check for accessibility issues, missing SEO tags, performance problems, and more.</p>
+                  <button
+                    onClick={handleRunAudit}
+                    disabled={files.length === 0}
+                    className="px-6 py-3 bg-violet-600 hover:bg-violet-700 text-white rounded-xl font-semibold transition-colors disabled:opacity-50"
+                  >
+                    Scan Now
+                  </button>
+                </div>
+              )}
+              {isAuditing && (
+                <div className="text-center py-12">
+                  <div className="w-10 h-10 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-gray-400 text-sm">Analyzing your code...</p>
+                </div>
+              )}
+              {auditComplete && fixIssues.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-sm text-gray-300 font-medium">{fixIssues.filter(i => !i.fixed).length} issue{fixIssues.filter(i => !i.fixed).length !== 1 ? 's' : ''} found</span>
+                    <button onClick={() => { setAuditComplete(false); setFixIssues([]); }} className="text-xs text-gray-500 hover:text-gray-300 transition-colors">Scan again</button>
+                  </div>
+                  {fixIssues.map(issue => (
+                    <div key={issue.id} className={`p-4 rounded-xl border transition-all ${issue.fixed ? 'border-green-800/50 bg-green-900/10' : 'border-gray-700/60 bg-[#111114]'}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                              issue.severity === 'high' ? 'bg-red-500/20 text-red-400' :
+                              issue.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-blue-500/20 text-blue-400'
+                            }`}>{issue.severity}</span>
+                            <span className="text-[9px] font-medium text-gray-500 uppercase tracking-wider">{issue.category}</span>
+                            <span className="text-[9px] text-gray-600">{issue.file}</span>
+                          </div>
+                          <p className="text-sm font-medium text-white mb-1">{issue.issue}</p>
+                          <p className="text-xs text-gray-500 leading-relaxed">{issue.detail}</p>
+                        </div>
+                        <div className="flex-shrink-0">
+                          {issue.fixed ? (
+                            <span className="flex items-center gap-1 text-xs text-green-400 font-medium">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                              Fixed
+                            </span>
+                          ) : issue.fixing ? (
+                            <div className="w-5 h-5 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                          ) : (
+                            <button
+                              onClick={() => handleFixIssue(issue)}
+                              className="text-xs px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                            >
+                              Fix it
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {auditComplete && fixIssues.length === 0 && (
+                <div className="text-center py-12">
+                  <div className="text-4xl mb-4">✅</div>
+                  <p className="text-white font-semibold">No issues found!</p>
+                  <p className="text-gray-400 text-sm mt-2">Your site looks clean.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Content Swap Modal ── */}
+      {showContentSwapModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1d26] border border-gray-700/80 rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-white">Personalize Content</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Replace lorem ipsum with real copy across all pages</p>
+              </div>
+              <button onClick={() => { if (!isSwappingContent) setShowContentSwapModal(false); }} className="text-gray-500 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-6">
+              {isSwappingContent ? (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 border-2 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-white font-medium mb-1">Personalizing content...</p>
+                  <p className="text-gray-400 text-sm">Page {swapProgress.current} of {swapProgress.total}</p>
+                  <div className="mt-4 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                      style={{ width: `${swapProgress.total > 0 ? (swapProgress.current / swapProgress.total) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-5">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Describe your project in 1–2 sentences
+                    </label>
+                    <textarea
+                      value={contentSwapDesc}
+                      onChange={e => setContentSwapDesc(e.target.value)}
+                      placeholder='e.g. "A freelance photographer based in Austin who specializes in wedding and portrait photography."'
+                      rows={3}
+                      className="w-full bg-white/5 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-emerald-500 transition-colors resize-none"
+                    />
+                    <p className="text-xs text-gray-600 mt-1.5">
+                      The AI will rewrite all placeholder text on {files.filter(f => f.language === 'html').length} HTML page{files.filter(f => f.language === 'html').length !== 1 ? 's' : ''} to match your description.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowContentSwapModal(false)} className="flex-1 py-2.5 text-sm bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl transition-colors">Cancel</button>
+                    <button
+                      onClick={handleContentSwap}
+                      disabled={!contentSwapDesc.trim()}
+                      className="flex-1 py-2.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold transition-colors disabled:opacity-50"
+                    >
+                      Personalize All Pages
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Import from URL Modal ── */}
+      {showImportUrlModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#1a1d26] border border-gray-700/80 rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-white">Import from URL</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Fetch any public webpage and recreate its layout with Tailwind CSS</p>
+              </div>
+              <button onClick={() => { if (!isImporting) setShowImportUrlModal(false); }} className="text-gray-500 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="p-6">
+              {isImporting ? (
+                <div className="text-center py-8">
+                  <div className="w-10 h-10 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-white font-medium mb-1">Fetching and recreating...</p>
+                  <p className="text-gray-400 text-sm">This may take 15–30 seconds</p>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-5">
+                    <label className="block text-sm font-medium text-gray-300 mb-2">Website URL</label>
+                    <input
+                      type="url"
+                      value={importUrl}
+                      onChange={e => setImportUrl(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleImportUrl()}
+                      placeholder="https://example.com"
+                      autoFocus
+                      className="w-full bg-white/5 border border-gray-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
+                    />
+                    <p className="text-xs text-gray-600 mt-1.5">
+                      The AI will analyze the page structure and rebuild it using Tailwind CSS. Works best on simple, publicly accessible pages.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowImportUrlModal(false)} className="flex-1 py-2.5 text-sm bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl transition-colors">Cancel</button>
+                    <button
+                      onClick={handleImportUrl}
+                      disabled={!importUrl.trim()}
+                      className="flex-1 py-2.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold transition-colors disabled:opacity-50"
+                    >
+                      Import &amp; Recreate
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
